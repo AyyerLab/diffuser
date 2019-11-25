@@ -16,11 +16,11 @@ except ImportError:
 import mrcfile
 
 class RBDiffuse():
-    def __init__(self, rot_plane=(1, 2)):
+    def __init__(self, rot_plane=(1,2)):
         self.size = None
-        # (1,2) represents rotation about X axis
+        self.diff_intens = None
         self.rot_plane = rot_plane
-        
+
     def rot_fdens(self, in_fdens, ang):
         out = np.empty_like(in_fdens)
         ndimage.rotate(in_fdens.real, ang, axes=self.rot_plane, reshape=False, order=0, output=out.real)
@@ -35,17 +35,17 @@ class RBDiffuse():
             self.dens = np.array(f.data)
             self.cella = f.header.cella['x']
         if reset:
-            self._initialize(**kwargs)
+            self.initialize(**kwargs)
 
-    def _initialize(self, translate=True):
+    def initialize(self, translate=True):
         self.fdens = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(self.dens)))
         self.mean_fdens = np.zeros_like(self.fdens)
         self.mean_intens = np.zeros_like(self.fdens, dtype='f4')
         self.denominator = 0.
-        
+
         if translate and self.size != self.fdens.shape[0]:
             self.size = self.fdens.shape[0]
-            cen = self.size // 2 
+            cen = self.size // 2
             self.qx, self.qy, self.qz = np.indices(self.fdens.shape, dtype='f4')
             self.qx = (self.qx - cen) / self.size * 2. * np.pi
             self.qy = (self.qy - cen) / self.size * 2. * np.pi
@@ -82,7 +82,7 @@ class RBDiffuse():
             sys.stderr.write('\r%d/%d: %+.3f deg (%.3e)   ' % (i+1, num_steps, angles[i], weights[i]))
         sys.stderr.write('\n')
 
-    def save(self, out_fname):
+    def aggregate(self):
         self.mean_fdens /= self.denominator
         self.mean_intens /= self.denominator
 
@@ -90,6 +90,10 @@ class RBDiffuse():
         # If using GPU, move output back to host
         if CUPY:
             self.diff_intens = self.diff_intens.get()
+
+    def save(self, out_fname):
+        if self.diff_intens is None:
+            self.aggregate()
 
         # Save to file
         with mrcfile.new(out_fname, overwrite=True) as f:
