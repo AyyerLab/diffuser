@@ -34,11 +34,11 @@ class RBDiffuse():
         with mrcfile.open(fname, 'r') as f:
             self.dens = np.array(f.data)
             self.cella = f.header.cella['x']
+        self.fdens = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(self.dens)))
         if reset:
             self.initialize(**kwargs)
 
     def initialize(self, translate=True):
-        self.fdens = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(self.dens)))
         self.mean_fdens = np.zeros_like(self.fdens)
         self.mean_intens = np.zeros_like(self.fdens, dtype='f4')
         self.denominator = 0.
@@ -52,7 +52,7 @@ class RBDiffuse():
             self.qz = (self.qz - cen) / self.size * 2. * np.pi
 
     def run_mc(self, num_steps, sigma_deg, cov_vox):
-        shifts = np.random.multivariate_normal(np.zeros(3), cov_vox, size=num_steps)
+        shifts = np.array(numpy.random.multivariate_normal(numpy.zeros(3), cov_vox, size=num_steps))
         angles = np.random.randn(num_steps) * sigma_deg
         weights = np.ones(shifts.shape[0])
         for i in range(num_steps):
@@ -107,8 +107,8 @@ def main():
     sigma_deg = 7
     sigma_vox = 0.8
     rot_plane = (1, 2) # Rotate about x-axis
-    num_steps = 201
-    cov_vox = np.diag(np.ones(3)*sigma_vox**2)
+    num_steps = 21
+    cov_vox = numpy.identity(3)*sigma_vox**2
 
     # Instantiate class
     rbd = RBDiffuse()
