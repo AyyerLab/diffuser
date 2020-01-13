@@ -29,9 +29,10 @@ class TrajectoryDiffuse():
         config.read(config_file)
 
         # Files
-        traj_fname = config.get('files', 'traj_fname')
-        topo_fname = config.get('files', 'topo_fname')
+        traj_fname = config.get('files', 'traj_fname', fallback=None)
+        topo_fname = config.get('files', 'topo_fname', fallback=None)
         sel_string = config.get('files', 'selection_string', fallback='all')
+        pdb_fname = config.get('files', 'pdb_fname', fallback=None)
         self.out_fname = config.get('files', 'out_fname', fallback=None)
 
         # Parameters
@@ -40,16 +41,26 @@ class TrajectoryDiffuse():
         rot_axis = config.getint('parameters', 'rot_axis', fallback=0)
         self.num_steps = config.getint('parameters', 'num_steps')
 
-        if self.out_fname is None:
-            self.out_fname = op.splitext(traj_fname)[0] + '_diffcalc.ccp4'
         self.cov_vox = numpy.identity(3) * sigma_vox**2
         self.rot_plane = tuple(numpy.delete([0,1,2], rot_axis))
         print('Parsed config file')
-        self._initialize_md(topo_fname, traj_fname, sel_string)
+        if pdb_fname is None:
+            if topo_fname is None or traj_fname is None:
+                raise AttributeError('Need either pdb_fname or both traj_fname and topo_fname')
+            self.univ = md.Universe(topo_fname, traj_fname)
+            self._initialize_md(sel_string)
+            if self.out_fname is None:
+                self.out_fname = op.splitext(traj_fname)[0] + '_diffcalc.ccp4'
+        else:
+            if topo_fname is not None and traj_fname is not None:
+                raise AttributeError('Cannot specify both pdb and topology/trajectory. Pick one.')
+            self.univ = md.Universe(pdb_fname)
+            self._initialize_md(sel_string)
+            if self.out_fname is None:
+                self.out_fname = op.splitext(pdb_fname)[0] + '_diffcalc.ccp4'
         print('Initialized MD universe')
 
-    def _initialize_md(self, topo, traj, sel_string):
-        self.univ = md.Universe(topo, traj)
+    def _initialize_md(self, sel_string):
         self.atoms = self.univ.select_atoms(sel_string)
         #self.elem = np.array([a.name[0] for a in self.atoms])
         #atom_types = np.unique(self.elem)
@@ -113,13 +124,13 @@ class TrajectoryDiffuse():
         '''
         return np.array(dens).astype('f4')
 
-    def run(self, num_frames=-1, init=True):
+    def run(self, num_frames=-1, first_frame=0, frame_stride=1, init=True):
         self.rbd.cella = 301*1.5 # TODO: Generalize
         if num_frames == -1:
-            num_frames = len(self.univ.trajectory)
+            num_frames = len(self.univ.trajectory) - first_frame
         print('Calculating diffuse intensities from %d frames' % num_frames)
         
-        for i in range(num_frames):
+        for i in range(first_frame, num_frames + first_frame, frame_stride):
             sys.stderr.write('Frame %d\n'%i)
             self.rbd.dens = np.copy(self.gen_dens(i))
             self.rbd.fdens = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(self.rbd.dens)))
@@ -130,6 +141,7 @@ class TrajectoryDiffuse():
                 init = False
             self.rbd.run_mc(self.num_steps, self.sigma_deg, self.cov_vox)
 
+        print('Saving output to', self.out_fname)
         self.rbd.save(self.out_fname)
 
 def main():
@@ -138,6 +150,8 @@ def main():
     parser = argparse.ArgumentParser(description='Generate diffuse intensities from rigid body motion')
     parser.add_argument('-c', '--config', help='Config file. Default: config.ini', default='config.ini')
     parser.add_argument('-n', '--num_frames', help='Number of frames to process. Default: -1 (all)', type=int, default=-1)
+    parser.add_argument('-f', '--first_frame', help='Index of first frame. Default: 0', type=int, default=0)
+    parser.add_argument('-s', '--frame_stride', help='Stride length for frames. Default: 1', type=int, default=1
     parser.add_argument('-d', '--device', help='GPU device ID (if applicable). Default: 0', type=int, default=0)
     args = parser.parse_args()
 
@@ -145,7 +159,7 @@ def main():
         np.cuda.Device(args.device).use()
 
     trajdiff = TrajectoryDiffuse(args.config)
-    trajdiff.run(args.num_frames)
+    trajdiff.run(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
 
 if __name__ == '__main__':
     main()
