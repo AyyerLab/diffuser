@@ -23,6 +23,39 @@ class TrajectoryDiffuse():
     def __init__(self, config_file):
         self._parse_config(config_file)
         self.rbd = rbdiff.RBDiffuse(self.rot_plane)
+        if CUPY:
+            self._define_kernels()
+
+    def _define_kernels(self):
+        self.k_gen_dens = np.RawKernel(r'''
+        extern "C" __global__
+        void gen_dens(const float *positions,
+                      const float *atom_f0,
+                      const long long num_atoms,
+                      const long long size,
+                      float *dens) {
+            int n = blockIdx.x * blockDim.x + threadIdx.x ;
+            if (n >= num_atoms)
+                return ;
+
+            float tx = positions[n*3 + 0] ;
+            float ty = positions[n*3 + 1] ;
+            float tz = positions[n*3 + 2] ;
+            float val = atom_f0[n] ;
+            int ix = __float2int_rd(tx), iy = __float2int_rd(ty), iz = __float2int_rd(tz) ;
+            float fx = tx - ix, fy = ty - iy, fz = tz - iz ;
+            float cx = 1. - fx, cy = 1. - fy, cz = 1. - fz ;
+
+            atomicAdd(&dens[ix*size*size + iy*size + iz], val*cx*cy*cz) ;
+            atomicAdd(&dens[ix*size*size + iy*size + iz+1], val*cx*cy*fz) ;
+            atomicAdd(&dens[ix*size*size + (iy+1)*size + iz], val*cx*fy*cz) ;
+            atomicAdd(&dens[ix*size*size + (iy+1)*size + iz+1], val*cx*fy*fz) ;
+            atomicAdd(&dens[(ix+1)*size*size + iy*size + iz], val*fx*cy*cz) ;
+            atomicAdd(&dens[(ix+1)*size*size + iy*size + iz+1], val*fx*cy*fz) ;
+            atomicAdd(&dens[(ix+1)*size*size + (iy+1)*size + iz], val*fx*fy*cz) ;
+            atomicAdd(&dens[(ix+1)*size*size + (iy+1)*size + iz+1], val*fx*fy*fz) ;
+        }
+        ''', 'gen_dens')
 
     def _parse_config(self, config_file):
         config = configparser.ConfigParser()
@@ -67,43 +100,43 @@ class TrajectoryDiffuse():
         #self.elem = np.array([a.name[0] for a in self.atoms])
         #atom_types = np.unique(self.elem)
 
-        # This hack works for low-Z atoms
-        self.atom_f0 = numpy.array([numpy.around(a.mass) for a in self.atoms]) / 2.
-        self.atom_f0[self.atom_f0 == 0.5] = 1.
+        # This hack works for low-Z atoms (mass = 2Z)
+        self.atom_f0 = (np.array([numpy.around(a.mass) for a in self.atoms]) / 2.).astype('f4')
+        self.atom_f0[self.atom_f0 == 0.5] = 1. # Hydrogens
         
     def gen_dens(self, ind):
-        dens = numpy.zeros(3*(self.size,), dtype='f4')
+        dens = np.zeros(3*(self.size,), dtype='f4')
 
-        # Get positions of atoms in this frame
+        # Get positions of atoms in this frame in centered voxels
         self.univ.trajectory[ind]
-        pos = numpy.array(self.atoms.positions)
+        pos = np.array(self.atoms.positions) / self.res_edge * 2.
+        pos += self.size // 2 - np.array(self.atoms.center_of_mass().astype('f4'))
 
-        # Convert coordinates to voxels (centered)
-        vox_size = self.res_edge / 2.
-        pos -= self.atoms.center_of_mass()
-        pos /= vox_size
-        pos += self.size // 2
+        # Interpolate into 3D array
+        if CUPY:
+            self.k_gen_dens((self.atoms.n_atoms//32+1,), (32,),
+                (pos, self.atom_f0, self.atoms.n_atoms, self.size, dens))
+        else:
+            ipos = pos.astype('i4')
+            fpos = pos - ipos
+            cpos = 1 - fpos
 
-        ipos = pos.astype('i4')
-        fpos = pos - ipos
-        cpos = 1 - fpos
-
-        curr_pos = ipos
-        numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*cpos[:,1]*cpos[:,2]*self.atom_f0)
-        curr_pos = ipos + numpy.array([0,0,1])
-        numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*cpos[:,1]*fpos[:,2]*self.atom_f0)
-        curr_pos = ipos + numpy.array([0,1,0])
-        numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*fpos[:,1]*cpos[:,2]*self.atom_f0)
-        curr_pos = ipos + numpy.array([0,1,1])
-        numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*fpos[:,1]*fpos[:,2]*self.atom_f0)
-        curr_pos = ipos + numpy.array([1,0,0])
-        numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*cpos[:,1]*cpos[:,2]*self.atom_f0)
-        curr_pos = ipos + numpy.array([1,0,1])
-        numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*cpos[:,1]*fpos[:,2]*self.atom_f0)
-        curr_pos = ipos + numpy.array([1,1,0])
-        numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*fpos[:,1]*cpos[:,2]*self.atom_f0)
-        curr_pos = ipos + numpy.array([1,1,1])
-        numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*fpos[:,1]*fpos[:,2]*self.atom_f0)
+            curr_pos = ipos
+            numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*cpos[:,1]*cpos[:,2]*self.atom_f0)
+            curr_pos = ipos + numpy.array([0,0,1])
+            numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*cpos[:,1]*fpos[:,2]*self.atom_f0)
+            curr_pos = ipos + numpy.array([0,1,0])
+            numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*fpos[:,1]*cpos[:,2]*self.atom_f0)
+            curr_pos = ipos + numpy.array([0,1,1])
+            numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*fpos[:,1]*fpos[:,2]*self.atom_f0)
+            curr_pos = ipos + numpy.array([1,0,0])
+            numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*cpos[:,1]*cpos[:,2]*self.atom_f0)
+            curr_pos = ipos + numpy.array([1,0,1])
+            numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*cpos[:,1]*fpos[:,2]*self.atom_f0)
+            curr_pos = ipos + numpy.array([1,1,0])
+            numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*fpos[:,1]*cpos[:,2]*self.atom_f0)
+            curr_pos = ipos + numpy.array([1,1,1])
+            numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*fpos[:,1]*fpos[:,2]*self.atom_f0)
 
         '''
         # Set up Gaussian windowing
@@ -125,16 +158,15 @@ class TrajectoryDiffuse():
             sys.stderr.write('\rAtom %.6d'%i)
         sys.stderr.write('\n')
         '''
-        return np.array(dens).astype('f4')
+        return dens
 
     def run(self, num_frames=-1, first_frame=0, frame_stride=1, init=True):
-        self.rbd.cella = 301*1.5 # TODO: Generalize
+        self.rbd.cella = self.size * self.res_edge / 2.
         if num_frames == -1:
             num_frames = len(self.univ.trajectory) - first_frame
         print('Calculating diffuse intensities from %d frames' % num_frames)
         
         for i in range(first_frame, num_frames + first_frame, frame_stride):
-            #sys.stderr.write('Frame %d\n'%i)
             self.rbd.dens = np.copy(self.gen_dens(i))
             self.rbd.fdens = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(self.rbd.dens)))
 
