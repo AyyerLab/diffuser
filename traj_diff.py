@@ -36,6 +36,8 @@ class TrajectoryDiffuse():
         self.out_fname = config.get('files', 'out_fname', fallback=None)
 
         # Parameters
+        self.size = config.getint('parameters', 'size')
+        self.res_edge = config.getfloat('parameters', 'res_edge')
         self.sigma_deg = config.getfloat('parameters', 'sigma_deg', fallback=0.)
         sigma_vox = config.getfloat('parameters', 'sigma_vox', fallback=0.)
         rot_axis = config.getint('parameters', 'rot_axis', fallback=0)
@@ -70,16 +72,17 @@ class TrajectoryDiffuse():
         self.atom_f0[self.atom_f0 == 0.5] = 1.
         
     def gen_dens(self, ind):
-        dens = numpy.zeros(3*(301,), dtype='f4') # TODO: Generalize
+        dens = numpy.zeros(3*(self.size,), dtype='f4')
 
         # Get positions of atoms in this frame
         self.univ.trajectory[ind]
         pos = numpy.array(self.atoms.positions)
 
         # Convert coordinates to voxels (centered)
+        vox_size = self.res_edge / 2.
         pos -= self.atoms.center_of_mass()
-        pos /= 1.5 # 1.5 A voxels TODO: Generalize
-        pos += 301 // 2 # 301^3 volume TODO: Generalize
+        pos /= vox_size
+        pos += self.size // 2
 
         ipos = pos.astype('i4')
         fpos = pos - ipos
@@ -131,7 +134,7 @@ class TrajectoryDiffuse():
         print('Calculating diffuse intensities from %d frames' % num_frames)
         
         for i in range(first_frame, num_frames + first_frame, frame_stride):
-            sys.stderr.write('Frame %d\n'%i)
+            #sys.stderr.write('Frame %d\n'%i)
             self.rbd.dens = np.copy(self.gen_dens(i))
             self.rbd.fdens = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(self.rbd.dens)))
 
@@ -139,7 +142,9 @@ class TrajectoryDiffuse():
                 do_translate = (self.cov_vox.sum() != 0.)
                 self.rbd.initialize(translate=do_translate)
                 init = False
-            self.rbd.run_mc(self.num_steps, self.sigma_deg, self.cov_vox)
+            prefix = 'Frame %d/%d: ' % (i, num_frames + first_frame)
+            self.rbd.run_mc(self.num_steps, self.sigma_deg, self.cov_vox, prefix=prefix)
+        sys.stderr.write('\n')
 
         print('Saving output to', self.out_fname)
         self.rbd.save(self.out_fname)
@@ -151,7 +156,7 @@ def main():
     parser.add_argument('-c', '--config', help='Config file. Default: config.ini', default='config.ini')
     parser.add_argument('-n', '--num_frames', help='Number of frames to process. Default: -1 (all)', type=int, default=-1)
     parser.add_argument('-f', '--first_frame', help='Index of first frame. Default: 0', type=int, default=0)
-    parser.add_argument('-s', '--frame_stride', help='Stride length for frames. Default: 1', type=int, default=1
+    parser.add_argument('-s', '--frame_stride', help='Stride length for frames. Default: 1', type=int, default=1)
     parser.add_argument('-d', '--device', help='GPU device ID (if applicable). Default: 0', type=int, default=0)
     args = parser.parse_args()
 
