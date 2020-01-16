@@ -103,14 +103,24 @@ class TrajectoryDiffuse():
         # This hack works for low-Z atoms (mass = 2Z)
         self.atom_f0 = (np.array([numpy.around(a.mass) for a in self.atoms]) / 2.).astype('f4')
         self.atom_f0[self.atom_f0 == 0.5] = 1. # Hydrogens
+
+        # B_sol filter for support mask
+        cen = self.size//2
+        ind = np.linspace(-cen, cen, self.size)
+        x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
+        q = np.sqrt(x*x + y*y + z*z) / cen / self.res_edge
+        # 30 A^2 B_sol
+        self.b_sol_filt = np.fft.ifftshift(np.exp(-30 * q * q))
         
     def gen_dens(self, ind):
         dens = np.zeros(3*(self.size,), dtype='f4')
 
         # Get positions of atoms in this frame in centered voxels
         self.univ.trajectory[ind]
-        pos = np.array(self.atoms.positions) / self.res_edge * 2.
-        pos += self.size // 2 - np.array(self.atoms.center_of_mass().astype('f4'))
+        pos = np.array(self.atoms.positions)
+        pos -= np.array(self.atoms.center_of_mass().astype('f4'))
+        pos *= 2. / self.res_edge
+        pos += self.size // 2
 
         # Interpolate into 3D array
         if CUPY:
@@ -137,6 +147,11 @@ class TrajectoryDiffuse():
             numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*fpos[:,1]*cpos[:,2]*self.atom_f0)
             curr_pos = ipos + numpy.array([1,1,1])
             numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*fpos[:,1]*fpos[:,2]*self.atom_f0)
+
+        # Solvent mask filtering
+        mask = (dens<0.2).astype('f4')
+        mask = np.real(np.fft.ifftn(np.fft.fftn(mask)*self.b_sol_filt)) - 1
+        dens += mask
 
         '''
         # Set up Gaussian windowing
