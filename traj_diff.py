@@ -197,7 +197,7 @@ class TrajectoryDiffuse():
         print('Saving output to', self.out_fname)
         self.rbd.save(self.out_fname)
 
-    def run_cc(self, num_frames=-1, first_frame=0, frame_stride=1):
+    def run_cc(self, num_frames=-1, first_frame=0, frame_stride=1, norm=False):
         if num_frames + first_frame > len(self.univ.trajectory) or num_frames == -1:
             num_frames = len(self.univ.trajectory) - first_frame
         print('Calculating displacement CC for %d frames' % num_frames)
@@ -232,26 +232,40 @@ class TrajectoryDiffuse():
             sys.stderr.write('\rFrame %d'%i)
         sys.stderr.write('\n')
 
-        std = np.sqrt(std)
-        corr[0] /= np.outer(std[:,0], std[:,0])
-        corr[1] /= np.outer(std[:,1], std[:,1])
-        corr[2] /= np.outer(std[:,2], std[:,2])
-        corr[3] /= np.outer(std[:,0], std[:,1])
-        corr[4] /= np.outer(std[:,1], std[:,2])
-        corr[5] /= np.outer(std[:,2], std[:,0])
+        if norm:
+            std = np.sqrt(std)
+            corr[0] /= np.outer(std[:,0], std[:,0])
+            corr[1] /= np.outer(std[:,1], std[:,1])
+            corr[2] /= np.outer(std[:,2], std[:,2])
+            corr[3] /= np.outer(std[:,0], std[:,1])
+            corr[4] /= np.outer(std[:,1], std[:,2])
+            corr[5] /= np.outer(std[:,2], std[:,0])
+            cc_fname = os.path.splitext(self.out_fname)[0] + '_cc.h5'
+            print('Saving CC matrix to', cc_fname)
+        else:
+            cc_fname = os.path.splitext(self.out_fname)[0] + '_cov.h5'
+            print('Saving covariance matrix to', cc_fname)
 
+        mean_pos -= mean_pos.mean(0)
         if CUPY:
             mean_pos = mean_pos.get()
         dist = numpy.linalg.norm(numpy.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
 
-        cc_fname = os.path.splitext(self.out_fname)[0] + '_cc.h5'
-        print('Saving CC matrix to', cc_fname)
-        with h5py.File(cc_fname, 'w') as f:
+        with h5py.File(cc_fname, 'a') as f:
             if CUPY:
-                f['cc'] = corr.get()
+                hcorr = corr.get()
             else:
-                f['cc'] = corr
+                hcorr = corr
+
+            if norm:
+                if 'cc' in f: del f['cc']
+            else:
+                if 'cov' in f: del f['cov']
+            if 'dist' in f: del f['dist']
+            if 'mean_pos' in f: del f['mean_pos']
+            f['corr'] = hcorr
             f['dist'] = dist
+            f['mean_pos'] = mean_pos
 
 def main():
     import argparse
@@ -262,15 +276,16 @@ def main():
     parser.add_argument('-f', '--first_frame', help='Index of first frame. Default: 0', type=int, default=0)
     parser.add_argument('-s', '--frame_stride', help='Stride length for frames. Default: 1', type=int, default=1)
     parser.add_argument('-d', '--device', help='GPU device ID (if applicable). Default: 0', type=int, default=0)
-    parser.add_argument('-C', '--cc', help='Calculate displacement CC instead of diffuse intensities. Default=False', action='store_true')
+    parser.add_argument('-C', '--cov', help='Calculate displacement covariance instead of diffuse intensities. Default=False', action='store_true')
+    parser.add_argument('-N', '--normalize', help='Normalize displacement covariance to get CC. Default=False', action='store_true')
     args = parser.parse_args()
 
     if CUPY:
         np.cuda.Device(args.device).use()
 
     trajdiff = TrajectoryDiffuse(args.config)
-    if args.cc:
-        trajdiff.run_cc(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
+    if args.cov:
+        trajdiff.run_cc(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride, norm=args.normalize)
     else:
         trajdiff.run(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
 
