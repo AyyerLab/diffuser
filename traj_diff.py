@@ -1,4 +1,4 @@
-
+import os
 import sys
 import os.path as op
 import configparser
@@ -14,6 +14,7 @@ except ImportError:
     from scipy import ndimage
     CUPY = False
     print('Using NumPy/SciPy')
+import h5py
 import MDAnalysis as md
 
 import rbdiff
@@ -111,7 +112,7 @@ class TrajectoryDiffuse():
         q = np.sqrt(x*x + y*y + z*z) / cen / self.res_edge
         # 30 A^2 B_sol
         self.b_sol_filt = np.fft.ifftshift(np.exp(-30 * q * q))
-        
+
     def gen_dens(self, ind):
         dens = np.zeros(3*(self.size,), dtype='f4')
 
@@ -180,7 +181,7 @@ class TrajectoryDiffuse():
         if num_frames == -1:
             num_frames = len(self.univ.trajectory) - first_frame
         print('Calculating diffuse intensities from %d frames' % num_frames)
-        
+
         for i in range(first_frame, num_frames + first_frame, frame_stride):
             self.rbd.dens = np.copy(self.gen_dens(i))
             self.rbd.fdens = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(self.rbd.dens)))
@@ -196,22 +197,82 @@ class TrajectoryDiffuse():
         print('Saving output to', self.out_fname)
         self.rbd.save(self.out_fname)
 
+    def run_cc(self, num_frames=-1, first_frame=0, frame_stride=1):
+        if num_frames + first_frame > len(self.univ.trajectory) or num_frames == -1:
+            num_frames = len(self.univ.trajectory) - first_frame
+        print('Calculating displacement CC for %d frames' % num_frames)
+
+        ca_atoms = self.univ.select_atoms('name CA')
+        num_atoms = ca_atoms.n_atoms
+        print('Position of %d C-alpha atoms will be used' % num_atoms)
+
+        std = np.zeros((num_atoms, 3))
+        corr = np.zeros((6, num_atoms, num_atoms))
+        mean_pos = np.zeros((num_atoms, 3))
+
+        print('Calculating mean position over selected frames')
+        for i in range(first_frame, num_frames + first_frame, frame_stride):
+            self.univ.trajectory[i]
+            mean_pos += np.array(ca_atoms.positions)
+            sys.stderr.write('\rFrame %d'%i)
+        sys.stderr.write('\n')
+        mean_pos /= num_frames
+
+        print('Calculating displacement CCs')
+        for i in range(first_frame, num_frames + first_frame, frame_stride):
+            self.univ.trajectory[i]
+            pos = np.array(ca_atoms.positions) - mean_pos
+            std += pos**2
+            corr[0] += np.outer(pos[:,0], pos[:,0])
+            corr[1] += np.outer(pos[:,1], pos[:,1])
+            corr[2] += np.outer(pos[:,2], pos[:,2])
+            corr[3] += np.outer(pos[:,0], pos[:,1])
+            corr[4] += np.outer(pos[:,1], pos[:,2])
+            corr[5] += np.outer(pos[:,2], pos[:,0])
+            sys.stderr.write('\rFrame %d'%i)
+        sys.stderr.write('\n')
+
+        std = np.sqrt(std)
+        corr[0] /= np.outer(std[:,0], std[:,0])
+        corr[1] /= np.outer(std[:,1], std[:,1])
+        corr[2] /= np.outer(std[:,2], std[:,2])
+        corr[3] /= np.outer(std[:,0], std[:,1])
+        corr[4] /= np.outer(std[:,1], std[:,2])
+        corr[5] /= np.outer(std[:,2], std[:,0])
+
+        if CUPY:
+            mean_pos = mean_pos.get()
+        dist = numpy.linalg.norm(numpy.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
+
+        cc_fname = os.path.splitext(self.out_fname)[0] + '_cc.h5'
+        print('Saving CC matrix to', cc_fname)
+        with h5py.File(cc_fname, 'w') as f:
+            if CUPY:
+                f['cc'] = corr.get()
+            else:
+                f['cc'] = corr
+            f['dist'] = dist
+
 def main():
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Generate diffuse intensities from rigid body motion')
     parser.add_argument('-c', '--config', help='Config file. Default: config.ini', default='config.ini')
     parser.add_argument('-n', '--num_frames', help='Number of frames to process. Default: -1 (all)', type=int, default=-1)
     parser.add_argument('-f', '--first_frame', help='Index of first frame. Default: 0', type=int, default=0)
     parser.add_argument('-s', '--frame_stride', help='Stride length for frames. Default: 1', type=int, default=1)
     parser.add_argument('-d', '--device', help='GPU device ID (if applicable). Default: 0', type=int, default=0)
+    parser.add_argument('-C', '--cc', help='Calculate displacement CC instead of diffuse intensities. Default=False', action='store_true')
     args = parser.parse_args()
 
     if CUPY:
         np.cuda.Device(args.device).use()
 
     trajdiff = TrajectoryDiffuse(args.config)
-    trajdiff.run(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
+    if args.cc:
+        trajdiff.run_cc(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
+    else:
+        trajdiff.run(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
 
 if __name__ == '__main__':
     main()
