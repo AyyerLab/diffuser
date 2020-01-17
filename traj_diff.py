@@ -64,6 +64,7 @@ class TrajectoryDiffuse():
 
         # Files
         traj_fname = config.get('files', 'traj_fname', fallback=None)
+        traj_flist = config.get('files', 'traj_flist', fallback=None)
         topo_fname = config.get('files', 'topo_fname', fallback=None)
         sel_string = config.get('files', 'selection_string', fallback='all')
         pdb_fname = config.get('files', 'pdb_fname', fallback=None)
@@ -80,15 +81,27 @@ class TrajectoryDiffuse():
         self.cov_vox = numpy.identity(3) * sigma_vox**2
         self.rot_plane = tuple(numpy.delete([0,1,2], rot_axis))
         print('Parsed config file')
+
         if pdb_fname is None:
-            if topo_fname is None or traj_fname is None:
-                raise AttributeError('Need either pdb_fname or both traj_fname and topo_fname')
-            self.univ = md.Universe(topo_fname, traj_fname)
+            if topo_fname is None:
+                raise AttributeError('Need either pdb_fname or topo_fname (if using trajectories)')
+
+            if traj_fname is not None and traj_flist is not None:
+                raise AttributeError('Cannot specify both traj_fname and traj_flist. Pick one.')
+            elif traj_fname is not None:
+                self.univ = md.Universe(topo_fname, traj_fname)
+            elif traj_flist is not None:
+                with open(traj_flist, 'r') as f:
+                    flist = [l.strip() for l in f.readlines()]
+                self.univ = md.Universe(topo_fname, flist)
+            else:
+                raise AttributeError('Need one of traj_fname or traj_flist with topology file')
+
             self._initialize_md(sel_string)
             if self.out_fname is None:
                 self.out_fname = op.splitext(traj_fname)[0] + '_diffcalc.ccp4'
         else:
-            if topo_fname is not None and traj_fname is not None:
+            if topo_fname is not None:
                 raise AttributeError('Cannot specify both pdb and topology/trajectory. Pick one.')
             self.univ = md.Universe(pdb_fname)
             self._initialize_md(sel_string)
@@ -197,7 +210,7 @@ class TrajectoryDiffuse():
         print('Saving output to', self.out_fname)
         self.rbd.save(self.out_fname)
 
-    def run_cc(self, num_frames=-1, first_frame=0, frame_stride=1, norm=False):
+    def run_cc(self, num_frames=-1, first_frame=0, frame_stride=1):
         if num_frames + first_frame > len(self.univ.trajectory) or num_frames == -1:
             num_frames = len(self.univ.trajectory) - first_frame
         print('Calculating displacement CC for %d frames' % num_frames)
@@ -206,7 +219,6 @@ class TrajectoryDiffuse():
         num_atoms = ca_atoms.n_atoms
         print('Position of %d C-alpha atoms will be used' % num_atoms)
 
-        std = np.zeros((num_atoms, 3))
         corr = np.zeros((6, num_atoms, num_atoms))
         mean_pos = np.zeros((num_atoms, 3))
 
@@ -222,7 +234,6 @@ class TrajectoryDiffuse():
         for i in range(first_frame, num_frames + first_frame, frame_stride):
             self.univ.trajectory[i]
             pos = np.array(ca_atoms.positions) - mean_pos
-            std += pos**2
             corr[0] += np.outer(pos[:,0], pos[:,0])
             corr[1] += np.outer(pos[:,1], pos[:,1])
             corr[2] += np.outer(pos[:,2], pos[:,2])
@@ -232,37 +243,20 @@ class TrajectoryDiffuse():
             sys.stderr.write('\rFrame %d'%i)
         sys.stderr.write('\n')
 
-        if norm:
-            std = np.sqrt(std)
-            corr[0] /= np.outer(std[:,0], std[:,0])
-            corr[1] /= np.outer(std[:,1], std[:,1])
-            corr[2] /= np.outer(std[:,2], std[:,2])
-            corr[3] /= np.outer(std[:,0], std[:,1])
-            corr[4] /= np.outer(std[:,1], std[:,2])
-            corr[5] /= np.outer(std[:,2], std[:,0])
-            cc_fname = os.path.splitext(self.out_fname)[0] + '_cc.h5'
-            print('Saving CC matrix to', cc_fname)
-        else:
-            cc_fname = os.path.splitext(self.out_fname)[0] + '_cov.h5'
-            print('Saving covariance matrix to', cc_fname)
+        cc_fname = os.path.splitext(self.out_fname)[0] + '_cov.h5'
+        print('Saving covariance matrix to', cc_fname)
 
         mean_pos -= mean_pos.mean(0)
         if CUPY:
             mean_pos = mean_pos.get()
         dist = numpy.linalg.norm(numpy.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
 
-        with h5py.File(cc_fname, 'a') as f:
+        with h5py.File(cc_fname, 'w') as f:
             if CUPY:
                 hcorr = corr.get()
             else:
                 hcorr = corr
 
-            if norm:
-                if 'cc' in f: del f['cc']
-            else:
-                if 'cov' in f: del f['cov']
-            if 'dist' in f: del f['dist']
-            if 'mean_pos' in f: del f['mean_pos']
             f['corr'] = hcorr
             f['dist'] = dist
             f['mean_pos'] = mean_pos
@@ -277,7 +271,6 @@ def main():
     parser.add_argument('-s', '--frame_stride', help='Stride length for frames. Default: 1', type=int, default=1)
     parser.add_argument('-d', '--device', help='GPU device ID (if applicable). Default: 0', type=int, default=0)
     parser.add_argument('-C', '--cov', help='Calculate displacement covariance instead of diffuse intensities. Default=False', action='store_true')
-    parser.add_argument('-N', '--normalize', help='Normalize displacement covariance to get CC. Default=False', action='store_true')
     args = parser.parse_args()
 
     if CUPY:
@@ -285,7 +278,7 @@ def main():
 
     trajdiff = TrajectoryDiffuse(args.config)
     if args.cov:
-        trajdiff.run_cc(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride, norm=args.normalize)
+        trajdiff.run_cc(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
     else:
         trajdiff.run(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
 
