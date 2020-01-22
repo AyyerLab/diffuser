@@ -215,8 +215,9 @@ class TrajectoryDiffuse():
             num_frames = len(self.univ.trajectory) - first_frame
         print('Calculating displacement CC for %d frames' % num_frames)
 
-        ca_atoms = self.univ.select_atoms('name CA')
-        num_atoms = ca_atoms.n_atoms
+        #ca_atoms = self.univ.select_atoms('name CA')
+        #ca_atoms = self.univ.select_atoms('protein and not (name H*)')
+        num_atoms = self.atoms.n_atoms
         print('Position of %d C-alpha atoms will be used' % num_atoms)
 
         corr = np.zeros((6, num_atoms, num_atoms))
@@ -225,7 +226,7 @@ class TrajectoryDiffuse():
         print('Calculating mean position over selected frames')
         for i in range(first_frame, num_frames + first_frame, frame_stride):
             self.univ.trajectory[i]
-            mean_pos += np.array(ca_atoms.positions)
+            mean_pos += np.array(self.atoms.positions)
             sys.stderr.write('\rFrame %d'%i)
         sys.stderr.write('\n')
         mean_pos /= num_frames
@@ -233,7 +234,7 @@ class TrajectoryDiffuse():
         print('Calculating displacement CCs')
         for i in range(first_frame, num_frames + first_frame, frame_stride):
             self.univ.trajectory[i]
-            pos = np.array(ca_atoms.positions) - mean_pos
+            pos = np.array(self.atoms.positions) - mean_pos
             corr[0] += np.outer(pos[:,0], pos[:,0])
             corr[1] += np.outer(pos[:,1], pos[:,1])
             corr[2] += np.outer(pos[:,2], pos[:,2])
