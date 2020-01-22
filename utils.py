@@ -1,5 +1,6 @@
 import numpy as np
 import pylab as P
+import cupy as cp
 
 def plot_cc(cc):
     P.clf()
@@ -46,7 +47,7 @@ def norm_cov(cov):
     return cc
     
 def get_allcov(cov):
-    allcov = np.zeros((3,1092,3,1092))
+    allcov = np.zeros((3,cov.shape[1],3,cov.shape[2]))
     allcov[0,:,0] = cov[0]
     allcov[0,:,1] = cov[3].T
     allcov[0,:,2] = cov[5]
@@ -56,32 +57,36 @@ def get_allcov(cov):
     allcov[2,:,0] = cov[5].T
     allcov[2,:,1] = cov[4]
     allcov[2,:,2] = cov[2]
-    return allcov.reshape(1092*3, 1092*3)
+    return allcov.reshape(cov.shape[1]*3, cov.shape[2]*3)
 
-def get_densproj(td, mean_pos, fvec, mtype='traj'):
+def get_densproj(td, mean_pos, fvec, mtype='traj', size=301):
     if mtype not in ['traj', 'linear', 'raw']:
-        raise ValueError('mtype must be one of trj, linear or raw')
-    num_frames = len(td.univ.trajectory)
+        raise ValueError('mtype must be one of traj, linear or raw')
 
-    densproj = cp.zeros((num_frames,301,301), dtype='f4')
-    dens = cp.zeros(3*(301,), dtype='f4')
+    if mtype == 'linear':
+        num_frames = 100
+    else:
+        num_frames = len(td.univ.trajectory)
+
+    densproj = cp.zeros((num_frames, size, size), dtype='f4')
+    dens = cp.zeros(3*(size,), dtype='f4')
     tfvec = fvec.reshape(3,-1).T
 
     for i in range(num_frames):
         td.univ.trajectory[i]
-        pos = td.atoms.positions
-        pos -= mean_pos
         if mtype == 'traj':
+            pos = td.atoms.positions - mean_pos
             dpos = np.dot(pos.T.ravel(), fvec) * tfvec
         elif mtype == 'linear':
-            dpos = np.linspace(-20,20,601)[i] * tfvec
+            dpos = np.linspace(-20, 20, num_frames)[i] * tfvec
         elif mtype == 'raw':
-            dpost = pos - mean_pos
+            dpos = td.atoms.positions - mean_pos
         pos = cp.array(mean_pos + dpos).astype('f4')
-        pos /= 0.5
-        pos += 150
+        pos /= 0.5 # 0.5 A voxel size
+        pos += size//2
         dens[:] = 0
-        td.k_gen_dens((1092//32+1,),(32,),(pos, td.atom_f0, 1092, 301, dens))
+        td.k_gen_dens((len(mean_pos)//32+1,), (32,),
+                      (pos, td.atom_f0, len(mean_pos), size, dens))
         densproj[i] = dens.sum(2)
     return densproj
     
