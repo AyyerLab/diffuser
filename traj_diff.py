@@ -235,6 +235,7 @@ class TrajectoryDiffuse():
         for i in range(first_frame, num_frames + first_frame, frame_stride):
             self.univ.trajectory[i]
             pos = np.array(self.atoms.positions) - mean_pos
+            pos *= self.atom_f0 # F-weighting the displacements
             corr[0] += np.outer(pos[:,0], pos[:,0])
             corr[1] += np.outer(pos[:,1], pos[:,1])
             corr[2] += np.outer(pos[:,2], pos[:,2])
@@ -255,12 +256,15 @@ class TrajectoryDiffuse():
         with h5py.File(cc_fname, 'w') as f:
             if CUPY:
                 hcorr = corr.get()
+                hf0 = self.atom_f0.get()
             else:
                 hcorr = corr
+                hf0 = self.atom_f0
 
             f['corr'] = hcorr
             f['dist'] = dist
             f['mean_pos'] = mean_pos
+            f['f0'] = hf0 # Atomic scattering factors
 
 def main():
     import argparse
