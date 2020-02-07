@@ -235,7 +235,7 @@ class TrajectoryDiffuse():
         for i in range(first_frame, num_frames + first_frame, frame_stride):
             self.univ.trajectory[i]
             pos = np.array(self.atoms.positions) - mean_pos
-            pos *= self.atom_f0 # F-weighting the displacements
+            pos = (pos.T * self.atom_f0).T # F-weighting the displacements
             corr[0] += np.outer(pos[:,0], pos[:,0])
             corr[1] += np.outer(pos[:,1], pos[:,1])
             corr[2] += np.outer(pos[:,2], pos[:,2])
