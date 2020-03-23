@@ -6,6 +6,7 @@ import pylab as P
 from matplotlib import colors
 import mrcfile
 import parse_dsn6
+import h5py
 
 def parse(fname, dset=None):
     ext = op.splitext(fname)[1]
