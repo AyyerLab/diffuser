@@ -89,6 +89,13 @@ class PCDiffuse():
             # Check number of vectors matches number of weights
             assert self.vecs.shape[1] == self.cov_weights.shape[0]
             self.num_vecs = self.cov_weights.shape[0]
+           ''' self.vec_weights = cp.array(f['weights'][:])
+            # Check number of components = 3N
+            assert self.vecs.shape[0] == self.avg_pos.size
+            # Check number of vectors matches number of weights
+            assert self.vecs.shape[1] == self.vec_weights.shape[0]
+            self.num_vecs = self.vec_weights.shape[0]
+            '''
             print('Using %d pricipal-component vectors on %d atoms' % (self.vecs.shape[1], self.vecs.shape[0]//3))
 
         # B_sol filter for support mask
@@ -189,9 +196,14 @@ class PCDiffuse():
         self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
         self.diff_intens = self.diff_intens.get()
 
-    def run_linear(self, mode, sigma):
+   ''' def run_linear(self, mode, sigma):
         params = cp.linspace(-4*sigma, 4*sigma, self.num_steps, dtype='f4')
         norm_weights = cp.exp(-params**2/2./sigma**2)
+   '''     
+    
+    def run_linear(self, mode):
+        params = cp.linspace(-4*self.vec_weights[mode], 4*self.vec_weights[mode], self.num_steps, dtype='f4')
+        norm_weights = cp.exp(-params**2/2./self.vec_weights[mode]**2)
 
         self._initialize()
         for i in range(self.num_steps):
@@ -211,11 +223,6 @@ class PCDiffuse():
         self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
         self.diff_intens = self.diff_intens.get()
     
-    def save_dens(self, out_fname):
-        print('Writing intensities to', out_fname)
-        with h5py.File(out_fname, 'w') as f:
-            f.create_dataset('diff_intens', data= diff_intens)
-
 
     def save(self, out_fname):
         print('Writing intensities to', out_fname)
