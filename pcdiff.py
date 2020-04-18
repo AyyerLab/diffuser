@@ -11,8 +11,6 @@ cp.disable_experimental_feature_warning = True
 import MDAnalysis as md
 import mrcfile
 
-#cp.cuda.Device(2).use()
-
 class PCDiffuse():
     def __init__(self, config_fname):
         self._parse_config(config_fname)
@@ -89,9 +87,8 @@ class PCDiffuse():
             # Check number of vectors matches number of weights
             assert self.vecs.shape[1] == self.cov_weights.shape[0]
             self.num_vecs = self.cov_weights.shape[0]
-           ''' self.vec_weights = cp.array(f['weights'][:])
-            # Check number of components = 3N
-            assert self.vecs.shape[0] == self.avg_pos.size
+            '''
+            self.vec_weights = cp.array(f['weights'][:])
             # Check number of vectors matches number of weights
             assert self.vecs.shape[1] == self.vec_weights.shape[0]
             self.num_vecs = self.vec_weights.shape[0]
@@ -124,7 +121,7 @@ class PCDiffuse():
         '''
         # Generate distorted molecule
         #projs = cp.random.normal(cp.zeros(self.num_vecs), self.vec_weights, size=self.num_vecs, dtype='f4')
-        projs = cp.array(cp.random.multivariate_normal(np.zeros(self.num_vecs), self.cov_weights)).astype('f4')
+        projs = cp.array(np.random.multivariate_normal(np.zeros(self.num_vecs), self.cov_weights.get())).astype('f4')
         curr_pos = self.avg_pos + cp.dot(self.vecs, projs).reshape(3,-1).T
 
         # Apply rigid body motions
@@ -196,15 +193,10 @@ class PCDiffuse():
         self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
         self.diff_intens = self.diff_intens.get()
 
-   ''' def run_linear(self, mode, sigma):
+    def run_linear(self, mode, sigma):
         params = cp.linspace(-4*sigma, 4*sigma, self.num_steps, dtype='f4')
         norm_weights = cp.exp(-params**2/2./sigma**2)
-   '''     
     
-    def run_linear(self, mode):
-        params = cp.linspace(-4*self.vec_weights[mode], 4*self.vec_weights[mode], self.num_steps, dtype='f4')
-        norm_weights = cp.exp(-params**2/2./self.vec_weights[mode]**2)
-
         self._initialize()
         for i in range(self.num_steps):
             dens = self.gen_proj_dens(mode, params[i])
@@ -223,7 +215,6 @@ class PCDiffuse():
         self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
         self.diff_intens = self.diff_intens.get()
     
-
     def save(self, out_fname):
         print('Writing intensities to', out_fname)
         with mrcfile.new(out_fname, overwrite=True) as f:
@@ -238,6 +229,8 @@ def main():
     parser.add_argument('config_file', help='Path to config file')
     parser.add_argument('-d', '--device', help='GPU device number. Default: 0', type=int, default=0)
     args = parser.parse_args()
+
+    cp.cuda.Device(args.device).use()
 
     pcd = PCDiffuse(args.config_file)
     pcd.run_mc()
