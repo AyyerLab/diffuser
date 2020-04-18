@@ -33,6 +33,10 @@ class PCDiffuse():
             float tz = positions[n*3 + 2] ;
             float val = atom_f0[n] ;
             int ix = __float2int_rd(tx), iy = __float2int_rd(ty), iz = __float2int_rd(tz) ;
+            if ((ix < 0) || (ix > size - 2) ||
+                (iy < 0) || (iy > size - 2) ||
+                (iz < 0) || (iz > size - 2))
+                return ;
             float fx = tx - ix, fy = ty - iy, fz = tz - iz ;
             float cx = 1. - fx, cy = 1. - fy, cz = 1. - fz ;
 
