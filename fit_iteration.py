@@ -6,17 +6,16 @@ import numpy as np
 cp.cuda.Device(2).use()
 pcd = pcdiff.PCDiffuse('config.ini')
 
-#Target diffuse map
+#Getting Target diffuse map
 
-with h5py.File('../CypA/xtc/md295_cov_weight_mc_diff_intens_16_9_1.2.h5', 'r') as f:
+with h5py.File('../CypA/xtc/md295_cov_w_mc_diff_intens_8_4.5_3.h5', 'r') as f:
     Y_mc  = f['Y_mc'][:]
 Y_mc = cp.array(Y_mc)
 
-
-#Calculated diffuse map
+#Calculated diffuse map (I_linear)
 
 print('Calculate diff_intens using PCs_run_linear')
-sigma = cp.array([3, 2])
+sigma = cp.array([4, 3])
 print('sigma' + str(sigma))
 
 D = []
@@ -44,13 +43,13 @@ modemat = cp.dot(cp.linalg.inv(cp.dot(X, X.T)), X)
 B = cp.dot(modemat, Y_mc)
 print('B' +str(B))
 
+# Getting new sigma after fitting
 sigma_new = cp.array(cp.sqrt(B) * sigma ) 
 vec_weights = sigma_new
 print('sigma_new' +str(vec_weights))
 
 b=[]
 w=[]
-
 
 for i in range (10):
     D = []
@@ -79,7 +78,7 @@ for i in range (10):
     w.append(vec_weights)
 
 
-out_fname = 'md295_cov_weight_linear_diff_intens3_2_22.h5'
+out_fname = 'md295_Itarget_Ilinear_lls_fit_.h5'
 
 with h5py.File('../CypA/xtc/'+out_fname, 'w') as f:
               f.create_dataset('diff_intens', data=TD.get())
