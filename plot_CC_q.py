@@ -8,17 +8,16 @@ import matplotlib.pylab as P
 import h5py
 import os
 import os.path as op
+import argparse
 
 def main():
-    import argparse
     parser = argparse.ArgumentParser(description=' 1. Imc calculator with BGO optimized s vectors; 2. Estimate anisotropic CC between Itarget and Imc; 3. Plotting CC v/s q')
     parser.add_argument('-c','--config_file', help ='Config file')
     parser.add_argument('-mc', '--run_mc', help = 'Calculate Imc with BGO optimized  s vectors. Default = False', action ='store_true')
-    parser.add_argument('Imc', help='Path to Imc file already exist.')
-    parser.add_argument('-cc', '--calc_cc', help ='calculate CC between Itarget and Imc. Default = False', action = 'store_true')
-    parser.add_argument('CC_q', help ='Path to CC/q dat file.')
+    parser.add_argument('-Imc', '--Imc', help='Path to Imc file already exist. Default = False', action = 'store_true')
+    parser.add_argument('-CC_q', '--CC_q', help ='Path to CC/radius/q file.')
 
-    parser.add_argument('-i', '--input_file/input_files', help = 'Files for compare CC v/s q plot from different Imc dataset and for recalculation of CC') 
+   # parser.add_argument('-i', '--input_file/input_files', help = 'Files for compare CC v/s q plot from different Imc dataset and for recalculation of CC') 
     
     parser.add_argument('-d', '--device', help = 'GPU device ID(if applicable). Default:0', type = int, default=0)
     
@@ -52,16 +51,15 @@ def main():
         with h5py.File(op.splitext(output_fname)[0]+'_diffcalc.h5', 'w') as f:    
              f['diff_intens'] = Imc
 
-    else:
+    elif args.Imc:
         #get Imc from file using -i option
         with h5py.File(args.Imc, 'r') as f:
             Imc = f['diff_intens'][:]
 
-    #get Itarget
-    Itarget = opt.Itarget
+        #get Itarget
+        Itarget = opt.Itarget
     
-    ###CC between Itarget and Imc
-    if args.calc_cc:
+        ###CC between Itarget and Imc
         Vol1 = cp.array(Itarget)
         Vol2 = cp.array(Imc)
 
@@ -82,11 +80,12 @@ def main():
         q = np.arange(num_bins) * bin_size / cen / res_edge
         
         calc_cc.save_to_file(op.splitext(output_fname)[0] +'_diffcal_CC.dat', cc, q)
+
     else:
         Corr = np.loadtxt(args.CC_q, skiprows =1)
         q = Corr[:, 1]
         cc = Corr[:, 2]
-        out_fname  = args.CC_q
+    
     
     ##Plotting CC v/s q
     ax = P.axes(xlim=(0, 1.4), ylim=(0, 1.0))
