@@ -1,6 +1,8 @@
 import configparser
 import numpy as np
 import cupy as cp
+from cupyx.scipy import ndimage as cndimage
+from scipy import special
 import h5py
 import skopt
 from skopt import forest_minimize
@@ -27,6 +29,7 @@ class CovarianceOptimizer():
         self.pcd.vecs = self.pcd.vecs[:,:self.num_vecs]
         self.radsel = self.get_radsel(401, 10, 200)
 
+        self.res_edge_A = conf.getfloat('parameters', 'res_edge')
         self.output_fname = conf.get('optimizer', 'output_fname')
         diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
         offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
@@ -87,6 +90,18 @@ class CovarianceOptimizer():
         self.pcd.run_mc()
         return self.pcd.diff_intens
 
+    def liquidize(self, intens, sigma_A, gamma_A):
+        q_Ainv = cp.array(self.rad / (self.rad.shape[-1]//2) / self.res_edge_A)
+        s_sq = (2. * np.pi * sigma_A * q_Ainv)**2
+
+        liq = cp.zeros_like(intens)
+        # TODO: Calculate n_max based on sigma_A, gamma_A and res_edge_A
+        for n in range(10):
+            kernel = 8. * np.pi * n * gamma_A**3 / (n**2 + (2 * np.pi * gamma_A * q_Ainv)**2)
+            liq += cndimage.convolve(intens, kernel, mode='wrap') * np.exp(-s_sq) * s_sq**n / special.factorial(n)
+
+        return liq
+            
     def obj_fun(self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
         Imc = self.get_mc_intens(s)
@@ -98,8 +113,8 @@ class CovarianceOptimizer():
     def get_radsel(size, rmin, rmax):
         ind = np.arange(size).astype('f8') - size//2
         x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        rad = np.sqrt(x*x + y*y + z*z)
-        return ((rad>=rmin) & (rad<=rmax)).ravel()
+        self.rad = np.sqrt(x*x + y*y + z*z)
+        return ((self.rad>=rmin) & (self.rad<=rmax)).ravel()
 
 if __name__ == '__main__':
     import argparse
