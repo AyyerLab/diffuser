@@ -28,14 +28,18 @@ class CovarianceOptimizer():
         self.pcd.cov_weights = cp.identity(self.num_vecs)
         self.pcd.vecs = self.pcd.vecs[:,:self.num_vecs]
         self.radsel = self.get_radsel(401, 10, 200)
-
+        self.size = conf.getint('parameters', 'size')
         self.res_edge_A = conf.getfloat('parameters', 'res_edge')
+        #self.sigma_A = conf.getfloat('parameters', 'sigma_A')
+        #self.gamma_A = conf.getfloat('parameters', 'gamma_A')
         self.output_fname = conf.get('optimizer', 'output_fname')
         diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
         offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
+        sigma_A_bounds = tuple([float(sigma_A) for sigma_A in conf.get('optimizer', 'sigma_A_bounds', fallback = '0 0').split()])
+        gamma_A_bounds = tuple([float(gamma_A) for gamma_A in conf.get('optimizer', 'gamma_A_bounds', fallback = '0 0').split()])
         self.dims = []
-        self.dims_code = 3 # Both diagonal and off-diagonal
-        self.get_dims(diag_bounds, offdiag_bounds)
+        self.dims_code = 3 #  both diagonal and off-diagonal        
+        self.get_dims(diag_bounds, offdiag_bounds, sigma_A_bounds, gamma_A_bounds)
 
     def optimize(self, num_iter, resume=False, n_initial_points=10, **kwargs):
         if resume:
@@ -55,15 +59,15 @@ class CovarianceOptimizer():
             verbose = True,
             x0 = x0,
             y0 = y0,
-            **kwargs
+            **kwargs 
             )
 
-    def get_dims(self, db, odb):
+    def get_dims(self, db, odb, sb, gb):
         if db[1] - db[0] == 0 and odb[1] - odb[0] == 0:
             raise ValueError('Need either diag_bounds or offdiag_bounds')
-        elif db[1] - db[0] == 0:
+        elif  db[1] - db[0] == 0:
             self.dims_code -= 1
-        elif odb[1] - odb[0] == 0:
+        elif odb[1] - odb[0] ==0:
             self.dims_code -= 2
 
         for i in range(self.num_vecs):
@@ -72,6 +76,10 @@ class CovarianceOptimizer():
                     self.dims += [skopt.space.Real(*db)]
                 elif self.dims_code & 2 != 0:
                     self.dims += [skopt.space.Real(*odb)]
+        
+        self.dims += [skopt.space.Real(*sb, name ='sigma_A')]
+        self.dims += [skopt.space.Real(*gb, name ='gamma_A')]
+        
         print(len(self.dims), 'dimensional optimization')
 
     def get_mc_intens(self, s):
@@ -90,8 +98,13 @@ class CovarianceOptimizer():
         self.pcd.run_mc()
         return self.pcd.diff_intens
 
+
     def liquidize(self, intens, sigma_A, gamma_A):
-        q_Ainv = cp.array(self.rad / (self.rad.shape[-1]//2) / self.res_edge_A)
+        ind = np.arange(self.size).astype('f8') - self.size//2
+        x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
+        rad = np.sqrt(x*x + y*y + z*z)
+
+        q_Ainv = cp.array(rad / (rad.shape[-1]//2) / self.res_edge_A)
         s_sq = (2. * np.pi * sigma_A * q_Ainv)**2
 
         liq = cp.zeros_like(intens)
@@ -102,19 +115,22 @@ class CovarianceOptimizer():
 
         return liq
             
-    def obj_fun(self, s):
+    def obj_fun (self, s, sigma_A, gamma_A):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
         Imc = self.get_mc_intens(s)
+        Iliq = self.liquidize(Imc, sigma_A, gamma_A)
         #return (cp.linalg.norm(Imc.ravel() - Itarget.ravel()).get()).item() / 1.e8
         #return 1. - cp.corrcoef(Imc.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1].get()
-        return 1. - np.corrcoef(Imc.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1]
+        
+        #return 1. - np.corrcoef(Imc.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1]
+        return 1. - np.corrcoef(Iliq.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1] 
 
     @staticmethod
     def get_radsel(size, rmin, rmax):
         ind = np.arange(size).astype('f8') - size//2
         x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        self.rad = np.sqrt(x*x + y*y + z*z)
-        return ((self.rad>=rmin) & (self.rad<=rmax)).ravel()
+        rad = np.sqrt(x*x + y*y + z*z)
+        return ((rad>=rmin) & (rad<=rmax)).ravel()
 
 if __name__ == '__main__':
     import argparse
