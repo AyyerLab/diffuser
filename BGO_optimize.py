@@ -35,8 +35,8 @@ class CovarianceOptimizer():
         self.output_fname = conf.get('optimizer', 'output_fname')
         diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
         offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
-        sigma_A_bounds = tuple([float(sigma_A) for sigma_A in conf.get('optimizer', 'sigma_A_bounds', fallback = '0 0').split()])
-        gamma_A_bounds = tuple([float(gamma_A) for gamma_A in conf.get('optimizer', 'gamma_A_bounds', fallback = '0 0').split()])
+        sigma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'sigma_A_bounds', fallback = '0 0').split()])
+        gamma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'gamma_A_bounds', fallback = '0 0').split()])
         self.dims = []
         self.dims_code = 3 #  both diagonal and off-diagonal        
         self.get_dims(diag_bounds, offdiag_bounds, sigma_A_bounds, gamma_A_bounds)
@@ -96,7 +96,7 @@ class CovarianceOptimizer():
                     self.pcd.cov_weights[j, i] = s[n]
                     n += 1
         self.pcd.run_mc()
-        return self.pcd.diff_intens
+        return cp.array(self.pcd.diff_intens)
 
 
     def liquidize(self, intens, sigma_A, gamma_A):
@@ -115,10 +115,10 @@ class CovarianceOptimizer():
 
         return liq
             
-    def obj_fun (self, s, sigma_A, gamma_A):
+    def obj_fun (self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
-        Imc = self.get_mc_intens(s)
-        Iliq = self.liquidize(Imc, sigma_A, gamma_A)
+        Imc = self.get_mc_intens(s[:-2])
+        Iliq = self.liquidize(Imc, s[-2], s[-1])
         #return (cp.linalg.norm(Imc.ravel() - Itarget.ravel()).get()).item() / 1.e8
         #return 1. - cp.corrcoef(Imc.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1].get()
         
