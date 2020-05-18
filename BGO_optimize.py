@@ -1,3 +1,4 @@
+import sys
 import configparser
 import numpy as np
 import cupy as cp
@@ -100,9 +101,9 @@ class CovarianceOptimizer():
 
     def liquidize(self, intens, sigma_A, gamma_A):
         cen = self.size // 2
-        ind = np.arange(self.size).astype('f8') - cen
-        x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        nrad = np.sqrt(x*x + y*y + z*z) / cen
+        ind = cp.arange(self.size).astype('f8') - cen
+        x, y, z = cp.meshgrid(ind, ind, ind, indexing='ij')
+        nrad = cp.sqrt(x*x + y*y + z*z) / cen
 
         q_Ainv = cp.array(nrad / self.res_edge_A)
         s_sq = (2. * cp.pi * sigma_A * q_Ainv)**2
@@ -112,10 +113,12 @@ class CovarianceOptimizer():
         n_max = 10
         # TODO: Calculate n_max based on sigma_A, gamma_A and res_edge_A
         for n in range(n_max):
-            kernel = cp.exp(-n * res_edge_A * cen * nrad / gamma_A)
-            liq += cp.exp(-s_sq) * s_sq**n / special.factorial(n) * cp.abs(cp.fft.fftshift(cp.fft.ifftn(patt * kernel)))
+            kernel = cp.exp(-n * self.res_edge_A * cen * nrad / gamma_A)
+            liq += cp.exp(-s_sq) * s_sq**n / float(special.factorial(n)) * cp.abs(cp.fft.fftshift(cp.fft.ifftn(patt * kernel)))
+            sys.stderr.write('\rLiquidizing: %d/%d' % (n+1, n_max))
             #kernel = 8. * np.pi * n * gamma_A**3 / (n**2 + (2 * np.pi * gamma_A * q_Ainv)**2)
             #liq += cndimage.convolve(intens, kernel, mode='wrap') * np.exp(-s_sq) * s_sq**n / special.factorial(n)
+        sys.stderr.write('\n')
 
         return liq
 
