@@ -110,14 +110,12 @@ class CovarianceOptimizer():
         patt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(intens)))
 
         liq = cp.zeros_like(intens)
-        n_max = 10
-        # TODO: Calculate n_max based on sigma_A, gamma_A and res_edge_A
+        slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j) for n in range(1,150)])
+        n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_edge_A)[0][0] + 1
         for n in range(n_max):
             kernel = cp.exp(-n * self.res_edge_A * cen * nrad / gamma_A)
             liq += cp.exp(-s_sq) * s_sq**n / float(special.factorial(n)) * cp.abs(cp.fft.fftshift(cp.fft.ifftn(patt * kernel)))
             sys.stderr.write('\rLiquidizing: %d/%d' % (n+1, n_max))
-            #kernel = 8. * np.pi * n * gamma_A**3 / (n**2 + (2 * np.pi * gamma_A * q_Ainv)**2)
-            #liq += cndimage.convolve(intens, kernel, mode='wrap') * np.exp(-s_sq) * s_sq**n / special.factorial(n)
         sys.stderr.write('\n')
 
         return liq
