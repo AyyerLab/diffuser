@@ -98,23 +98,27 @@ class CovarianceOptimizer():
         self.pcd.run_mc()
         return cp.array(self.pcd.diff_intens)
 
-
     def liquidize(self, intens, sigma_A, gamma_A):
-        ind = np.arange(self.size).astype('f8') - self.size//2
+        cen = self.size // 2
+        ind = np.arange(self.size).astype('f8') - cen
         x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        rad = np.sqrt(x*x + y*y + z*z)
+        nrad = np.sqrt(x*x + y*y + z*z) / cen
 
-        q_Ainv = cp.array(rad / (rad.shape[-1]//2) / self.res_edge_A)
-        s_sq = (2. * np.pi * sigma_A * q_Ainv)**2
+        q_Ainv = cp.array(nrad / self.res_edge_A)
+        s_sq = (2. * cp.pi * sigma_A * q_Ainv)**2
+        patt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(intens)))
 
         liq = cp.zeros_like(intens)
+        n_max = 10
         # TODO: Calculate n_max based on sigma_A, gamma_A and res_edge_A
-        for n in range(10):
-            kernel = 8. * np.pi * n * gamma_A**3 / (n**2 + (2 * np.pi * gamma_A * q_Ainv)**2)
-            liq += cndimage.convolve(intens, kernel, mode='wrap') * np.exp(-s_sq) * s_sq**n / special.factorial(n)
+        for n in range(n_max):
+            kernel = cp.exp(-n * res_edge_A * cen * nrad / gamma_A)
+            liq += cp.exp(-s_sq) * s_sq**n / special.factorial(n) * cp.abs(cp.fft.fftshift(cp.fft.ifftn(patt * kernel)))
+            #kernel = 8. * np.pi * n * gamma_A**3 / (n**2 + (2 * np.pi * gamma_A * q_Ainv)**2)
+            #liq += cndimage.convolve(intens, kernel, mode='wrap') * np.exp(-s_sq) * s_sq**n / special.factorial(n)
 
         return liq
-            
+
     def obj_fun (self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
         Imc = self.get_mc_intens(s[:-2])
