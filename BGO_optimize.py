@@ -130,7 +130,7 @@ class CovarianceOptimizer():
         #return 1. - cp.corrcoef(Imc.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1].get()
         
         #return 1. - np.corrcoef(Imc.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1]
-        return 1. - np.corrcoef(Iliq.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1] 
+        return float(1. - np.corrcoef(Iliq.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1])
 
     @staticmethod
     def get_radsel(size, rmin, rmax):
