@@ -21,26 +21,32 @@ class CovarianceOptimizer():
 
         # Setup PCDiff...
         self.num_steps = conf.getint('optimizer', 'num_steps')
-        #noise = 51209.805 / 1.e5 / 3
         self.num_vecs = conf.getint('optimizer', 'num_vecs')
         self.pcd = pcdiff.PCDiffuse(config_file)
         self.pcd.num_steps = self.num_steps
         self.pcd.num_vecs = self.num_vecs
         self.pcd.cov_weights = cp.identity(self.num_vecs)
         self.pcd.vecs = self.pcd.vecs[:,:self.num_vecs]
-        self.radsel = self.get_radsel(401, 10, 200)
+
         self.size = conf.getint('parameters', 'size')
         self.res_edge_A = conf.getfloat('parameters', 'res_edge')
-        #self.sigma_A = conf.getfloat('parameters', 'sigma_A')
-        #self.gamma_A = conf.getfloat('parameters', 'gamma_A')
         self.output_fname = conf.get('optimizer', 'output_fname')
         diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
         offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
         sigma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'sigma_A_bounds', fallback = '0 0').split()])
         gamma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'gamma_A_bounds', fallback = '0 0').split()])
+        self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
+        self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
+
         self.dims = []
         self.dims_code = 3 #  both diagonal and off-diagonal        
         self.get_dims(diag_bounds, offdiag_bounds, sigma_A_bounds, gamma_A_bounds)
+
+        self.intrad, self.radsel = self.get_radsel(self.size, 10, self.size // 2)
+        self.radcount = None
+        if self.do_aniso:
+            radavg = self.get_radavg(self.Itarget)
+            self.Itarget -= radavg[self.intrad]
 
     def optimize(self, num_iter, resume=False, n_initial_points=10, **kwargs):
         if resume:
@@ -124,18 +130,33 @@ class CovarianceOptimizer():
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
         Imc = self.get_mc_intens(s[:-2])
         Iliq = self.liquidize(Imc, s[-2], s[-1])
-        #return (cp.linalg.norm(Imc.ravel() - Itarget.ravel()).get()).item() / 1.e8
-        #return 1. - cp.corrcoef(Imc.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1].get()
-        
-        #return 1. - np.corrcoef(Imc.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1]
-        return float(1. - np.corrcoef(Iliq.ravel()[self.radsel], self.Itarget.ravel()[self.radsel])[0,1])
+
+        if self.do_aniso:
+            radavg = self.get_radavg(Iliq)
+            Iliq -= radavg[self.intrad]
+
+        if self.do_weighting:
+            cov = np.cov(self.Iliq[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
+            retval = cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
+        else:
+            retval = 1. - np.corrcoef(Iliq[self.radsel], self.Itarget[self.radsel])[0,1]
+
+        return float(retval)
 
     @staticmethod
     def get_radsel(size, rmin, rmax):
         ind = np.arange(size).astype('f8') - size//2
         x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        rad = np.sqrt(x*x + y*y + z*z)
-        return ((rad>=rmin) & (rad<=rmax)).ravel()
+        rad = np.sqrt(x*x + y*y + z*z).astype('i4')
+        return rad, ((rad>=rmin) & (rad<=rmax))
+
+    def get_radavg(self, intens):
+        if self.radcount is not None:
+            self.radcount = np.zeros(self.intrad.max() + 1)
+            np.add.at(self.radcount, self.intrad, 1)
+        radavg = np.zeros_like(self.radcount)
+        np.add.at(radavg, self.intrad, intens)
+        return radavg / self.radcount
 
 if __name__ == '__main__':
     import argparse
