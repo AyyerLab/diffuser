@@ -151,7 +151,7 @@ class CovarianceOptimizer():
         return rad, ((rad>=rmin) & (rad<=rmax))
 
     def get_radavg(self, intens):
-        if self.radcount is not None:
+        if self.radcount is None:
             self.radcount = np.zeros(self.intrad.max() + 1)
             np.add.at(self.radcount, self.intrad, 1)
         radavg = np.zeros_like(self.radcount)
