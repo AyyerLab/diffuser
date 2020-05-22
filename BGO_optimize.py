@@ -137,7 +137,7 @@ class CovarianceOptimizer():
 
         if self.do_weighting:
             cov = np.cov(Iliq[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
-            retval = cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
+            retval = 1. - cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
         else:
             retval = 1. - np.corrcoef(Iliq[self.radsel], self.Itarget[self.radsel])[0,1]
 
