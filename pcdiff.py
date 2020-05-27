@@ -128,14 +128,14 @@ class PCDiffuse():
         #projs = cp.random.normal(cp.zeros(self.num_vecs), self.vec_weights, size=self.num_vecs, dtype='f4')
         projs = cp.array(np.random.multivariate_normal(np.zeros(self.num_vecs), self.cov_weights.get())).astype('f4')
         curr_pos = self.avg_pos + cp.dot(self.vecs, projs).reshape(3,-1).T
-
+        
         # Apply rigid body motions
         curr_pos += cp.array(np.random.multivariate_normal(np.zeros(3), self.cov_vox)).astype('f4')
         curr_pos = cp.dot(curr_pos, self._gen_rotz(np.random.randn() * self.sigma_deg * np.pi / 180))
-
+        
         # Apply uncorrelated displacements
         if self.sigma_uncorr_A > 0.:
-            curr_pos += cp.random.randn(curr_pos.shape) * self.sigma_uncorr_A
+            curr_pos += cp.random.randn(*curr_pos.shape) * self.sigma_uncorr_A
 
         # Convert to voxel units
         curr_pos *= 2. / self.res_edge
