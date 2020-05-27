@@ -66,6 +66,7 @@ class PCDiffuse():
         self.res_edge = config.getfloat('parameters', 'res_edge')
         self.sigma_deg = config.getfloat('parameters', 'sigma_deg', fallback=0.)
         sigma_vox = config.getfloat('parameters', 'sigma_vox', fallback=0.)
+        self.sigma_uncorr_A = config.getfloat('parameters', 'sigma_uncorr_A', fallback=0.)
         self.cov_vox = np.identity(3) * sigma_vox**2
         self.num_steps = config.getint('parameters', 'num_steps')
 
@@ -131,6 +132,10 @@ class PCDiffuse():
         # Apply rigid body motions
         curr_pos += cp.array(np.random.multivariate_normal(np.zeros(3), self.cov_vox)).astype('f4')
         curr_pos = cp.dot(curr_pos, self._gen_rotz(np.random.randn() * self.sigma_deg * np.pi / 180))
+
+        # Apply uncorrelated displacements
+        if self.sigma_uncorr_A > 0.:
+            curr_pos += cp.random.randn(curr_pos.shape) * self.sigma_uncorr_A
 
         # Convert to voxel units
         curr_pos *= 2. / self.res_edge
