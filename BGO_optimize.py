@@ -84,8 +84,9 @@ class CovarianceOptimizer():
                 elif self.dims_code & 2 != 0:
                     self.dims += [skopt.space.Real(*odb)]
         
-        self.dims += [skopt.space.Real(*sb, name ='sigma_A')]
-        self.dims += [skopt.space.Real(*gb, name ='gamma_A')]
+        if sb[1] - sb[0] !=0 and gb[1] - gb[0] !=0:
+            self.dims += [skopt.space.Real(*sb, name ='sigma_A')]
+            self.dims += [skopt.space.Real(*gb, name ='gamma_A')]
         
         print(len(self.dims), 'dimensional optimization')
 
@@ -128,9 +129,14 @@ class CovarianceOptimizer():
 
     def obj_fun (self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
-        Imc = self.get_mc_intens(s[:-2])
-        Iliq = self.liquidize(Imc, s[-2], s[-1]).get()
+        Imc = self.get_mc_intens(s)
 
+        if s[-2] != 0  and s[-1] != 0 :
+            Imc = self.get_mc_intens(s[:-2])
+            Iliq = self.liquidize(Imc, s[-2], s[-1]).get()
+
+            retval = 1. - np.corrcoef(Iliq[self.radsel], self.Itarget[self.radsel])[0,1]
+       
         if self.do_aniso:
             radavg = self.get_radavg(Iliq)
             Iliq -= radavg[self.intrad]
@@ -139,7 +145,7 @@ class CovarianceOptimizer():
             cov = np.cov(Iliq[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
             retval = 1. - cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
         else:
-            retval = 1. - np.corrcoef(Iliq[self.radsel], self.Itarget[self.radsel])[0,1]
+            retval = 1. - np.corrcoef(Imc[self.radsel], self.Itarget[self.radsel])[0,1]
 
         return float(retval)
 
