@@ -31,16 +31,16 @@ class CovarianceOptimizer():
         self.size = conf.getint('parameters', 'size')
         self.res_edge_A = conf.getfloat('parameters', 'res_edge')
         self.output_fname = conf.get('optimizer', 'output_fname')
-        diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
-        offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
-        sigma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'sigma_A_bounds', fallback = '0 0').split()])
-        gamma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'gamma_A_bounds', fallback = '0 0').split()])
+        self.diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
+        self.offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
+        self.sigma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'sigma_A_bounds', fallback = '0 0').split()])
+        self.gamma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'gamma_A_bounds', fallback = '0 0').split()])
         self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
         self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
 
         self.dims = []
         self.dims_code = 3 #  both diagonal and off-diagonal        
-        self.get_dims(diag_bounds, offdiag_bounds, sigma_A_bounds, gamma_A_bounds)
+        self.get_dims(self.diag_bounds, self.offdiag_bounds, self.sigma_A_bounds, self.gamma_A_bounds)
 
         self.intrad, self.radsel = self.get_radsel(self.size, 10, self.size // 2)
         self.radcount = None
@@ -131,7 +131,7 @@ class CovarianceOptimizer():
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
         Imc = self.get_mc_intens(s)
 
-        if s[-2] != 0  and s[-1] != 0 :
+        if self.sigma_A_bounds[1] - self.sigma_A_bounds[0] !=0 and self.gamma_A_bounds[1] - self.gamma_A_bounds[0] !=0:
             Imc = self.get_mc_intens(s[:-2])
             Iliq = self.liquidize(Imc, s[-2], s[-1]).get()
 
