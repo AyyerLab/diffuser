@@ -129,20 +129,29 @@ class CovarianceOptimizer():
 
     def obj_fun (self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
-        Imc = self.get_mc_intens(s)
+        Imc = self.get_mc_intens(s).get()
 
         if self.sigma_A_bounds[1] - self.sigma_A_bounds[0] !=0 and self.gamma_A_bounds[1] - self.gamma_A_bounds[0] !=0:
             Imc = self.get_mc_intens(s[:-2])
             Iliq = self.liquidize(Imc, s[-2], s[-1]).get()
+            
+            if self.do_aniso:
+                radavg = self.get_radavg(Iliq)
+                Iliq -= radavg[self.intrad]
 
-            retval = 1. - np.corrcoef(Iliq[self.radsel], self.Itarget[self.radsel])[0,1]
+            if self.do_weighting:
+                cov = np.cov(Iliq[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
+                retval = 1. - cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
+
+            else:
+                retval = 1. - np.corrcoef(Iliq[self.radsel], self.Itarget[self.radsel])[0,1]
        
         if self.do_aniso:
-            radavg = self.get_radavg(Iliq)
-            Iliq -= radavg[self.intrad]
+            radavg = self.get_radavg(Imc)
+            Imc -= radavg[self.intrad]
 
         if self.do_weighting:
-            cov = np.cov(Iliq[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
+            cov = np.cov(Imc[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
             retval = 1. - cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
         else:
             retval = 1. - np.corrcoef(Imc[self.radsel], self.Itarget[self.radsel])[0,1]
