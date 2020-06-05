@@ -33,14 +33,14 @@ class CovarianceOptimizer():
         self.output_fname = conf.get('optimizer', 'output_fname')
         self.diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
         self.offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
-        self.sigma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'sigma_A_bounds', fallback = '0 0').split()])
-        self.gamma_A_bounds = tuple([float(s) for s in conf.get('optimizer', 'gamma_A_bounds', fallback = '0 0').split()])
+        self.llm_sigma_bounds = tuple([float(s) for s in conf.get('optimizer', 'LLM_sigma_A_bounds', fallback = '0 0').split()])
+        self.llm_gamma_bounds = tuple([float(s) for s in conf.get('optimizer', 'LLM_gamma_A_bounds', fallback = '0 0').split()])
+        self.uncorr_bounds = tuple([float(s) for s in conf.get('optimizer', 'uncorr_sigma_A_bounds', fallback = '0 0').split()])
         self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
         self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
 
         self.dims = []
-        self.dims_code = 3 #  both diagonal and off-diagonal        
-        self.get_dims(self.diag_bounds, self.offdiag_bounds, self.sigma_A_bounds, self.gamma_A_bounds)
+        self.get_dims()
 
         self.intrad, self.radsel = self.get_radsel(self.size, 10, self.size // 2)
         self.radcount = None
@@ -69,24 +69,40 @@ class CovarianceOptimizer():
             **kwargs 
             )
 
-    def get_dims(self, db, odb, sb, gb):
-        if db[1] - db[0] == 0 and odb[1] - odb[0] == 0:
-            raise ValueError('Need either diag_bounds or offdiag_bounds')
-        elif  db[1] - db[0] == 0:
-            self.dims_code -= 1
-        elif odb[1] - odb[0] ==0:
-            self.dims_code -= 2
+    def get_dims(self):
+        db = self.diag_bounds
+        odb = self.off_diag_bounds
+        llmsb = self.llm_sigma_bounds
+        llmgb = self.llm_gamma_bounds
+        ucb = self.uncorr_bounds
+
+        self.dims_code = 0 # No optimization
+        if  db[1] - db[0] != 0:
+            self.dims_code += 1
+            print('Optimizing diagonal components')
+        if odb[1] - odb[0] != 0:
+            self.dims_code += 2
+            print('Optimizing off-diagonal components')
+        if llmsb[1] - llmsb[0] != 0 and llmgb[1] - llmgb[0] !:
+            self.dims_code += 4
+            print('Optimizing LLM parameters')
+        if ucb[1] - ucb[0] != 0:
+            self.dims_code += 8
+            print('Optimizing uncorrelated variance')
 
         for i in range(self.num_vecs):
             for j in range(i+1):
                 if i == j and self.dims_code & 1 != 0:
-                    self.dims += [skopt.space.Real(*db)]
+                    self.dims += [skopt.space.Real(*db, name='X_%d_%d'%(i,j))]
                 elif self.dims_code & 2 != 0:
-                    self.dims += [skopt.space.Real(*odb)]
+                    self.dims += [skopt.space.Real(*odb, name='X_%d_%d'%(i,j))]
         
-        if sb[1] - sb[0] !=0 and gb[1] - gb[0] !=0:
-            self.dims += [skopt.space.Real(*sb, name ='sigma_A')]
-            self.dims += [skopt.space.Real(*gb, name ='gamma_A')]
+        if self.dims_code & 4 != 0:
+            self.dims += [skopt.space.Real(*ucb, name='Uncorr_A')]
+
+        if self.dims_code & 8 != 0:
+            self.dims += [skopt.space.Real(*llmsb, name ='LLM_sigma_A')]
+            self.dims += [skopt.space.Real(*llmgb, name ='LLM_gamma_A')]
         
         print(len(self.dims), 'dimensional optimization')
 
@@ -103,6 +119,10 @@ class CovarianceOptimizer():
                     self.pcd.cov_weights[i, j] = s[n]
                     self.pcd.cov_weights[j, i] = s[n]
                     n += 1
+        if self.dims_code & 4 != 0:
+            self.pcd.sigma_uncorr_A = s[n]
+            n += 1
+
         self.pcd.run_mc()
         return cp.array(self.pcd.diff_intens)
 
@@ -131,30 +151,21 @@ class CovarianceOptimizer():
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
         Imc = self.get_mc_intens(s).get()
 
-        if self.sigma_A_bounds[1] - self.sigma_A_bounds[0] !=0 and self.gamma_A_bounds[1] - self.gamma_A_bounds[0] !=0:
+        if self.dims_code & 8 != 0:
             Imc = self.get_mc_intens(s[:-2])
-            Iliq = self.liquidize(Imc, s[-2], s[-1]).get()
+            Icalc = self.liquidize(Imc, s[-2], s[-1]).get()
+        else:
+            Icalc = Imc
             
-            if self.do_aniso:
-                radavg = self.get_radavg(Iliq)
-                Iliq -= radavg[self.intrad]
-
-            if self.do_weighting:
-                cov = np.cov(Iliq[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
-                retval = 1. - cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
-
-            else:
-                retval = 1. - np.corrcoef(Iliq[self.radsel], self.Itarget[self.radsel])[0,1]
-       
         if self.do_aniso:
-            radavg = self.get_radavg(Imc)
-            Imc -= radavg[self.intrad]
+            radavg = self.get_radavg(Icalc)
+            Icalc -= radavg[self.intrad]
 
         if self.do_weighting:
-            cov = np.cov(Imc[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
+            cov = np.cov(Icalc[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
             retval = 1. - cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
         else:
-            retval = 1. - np.corrcoef(Imc[self.radsel], self.Itarget[self.radsel])[0,1]
+            retval = 1. - np.corrcoef(Icalc[self.radsel], self.Itarget[self.radsel])[0,1]
 
         return float(retval)
 
