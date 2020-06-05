@@ -83,12 +83,12 @@ class CovarianceOptimizer():
         if odb[1] - odb[0] != 0:
             self.dims_code += 2
             print('Optimizing off-diagonal components')
-        if llmsb[1] - llmsb[0] != 0 and llmgb[1] - llmgb[0] !:
-            self.dims_code += 4
-            print('Optimizing LLM parameters')
         if ucb[1] - ucb[0] != 0:
-            self.dims_code += 8
+            self.dims_code += 4
             print('Optimizing uncorrelated variance')
+        if llmsb[1] - llmsb[0] != 0 and llmgb[1] - llmgb[0] !=0: 
+            self.dims_code += 8
+            print('Optimizing LLM parameters')
 
         for i in range(self.num_vecs):
             for j in range(i+1):
