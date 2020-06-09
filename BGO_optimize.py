@@ -42,7 +42,7 @@ class CovarianceOptimizer():
         self.dims = []
         self.get_dims()
 
-        self.intrad, self.radsel = self.get_radsel(self.size, 10, self.size // 2)
+        self.intrad, self.radsel = self.get_radsel(self.size, 10, self.size // 4)
         self.radcount = None
         if self.do_aniso:
             radavg = self.get_radavg(self.Itarget)
@@ -58,11 +58,12 @@ class CovarianceOptimizer():
             y0 = None
 
         checkpoint_saver = CheckpointSaver(self.output_fname, store_objective=False)
-        res = forest_minimize(self.obj_fun,
+        res = skopt.gp_minimize(self.obj_fun,
             self.dims,
             n_calls = num_iter,
             n_random_starts = n_initial_points,
             callback = [checkpoint_saver],
+            noise = 1e-7,
             verbose = True,
             x0 = x0,
             y0 = y0,
@@ -71,7 +72,7 @@ class CovarianceOptimizer():
 
     def get_dims(self):
         db = self.diag_bounds
-        odb = self.off_diag_bounds
+        odb = self.offdiag_bounds
         llmsb = self.llm_sigma_bounds
         llmgb = self.llm_gamma_bounds
         ucb = self.uncorr_bounds
@@ -108,6 +109,12 @@ class CovarianceOptimizer():
 
     def get_mc_intens(self, s):
         '''Get MC diffuse intensities for given 's' parameter'''
+        #get s values from 5vecs_diag_optimization
+        ''' res_5vecs_diag = skopt.load('../CypA/xtc/md295_forest_md_5vecs_diag.pkl')
+        sigmas_diag = cp.array(res_5vecs_diag.x)
+        self.pcd.cov_weights = self.pcd.cov_weights * sigmas_diag**2
+        '''
+        
         self.pcd.cov_weights[:] = 0.
         n = 0
         for i in range(self.num_vecs):
@@ -119,6 +126,7 @@ class CovarianceOptimizer():
                     self.pcd.cov_weights[i, j] = s[n]
                     self.pcd.cov_weights[j, i] = s[n]
                     n += 1
+                    
         if self.dims_code & 4 != 0:
             self.pcd.sigma_uncorr_A = s[n]
             n += 1
@@ -149,13 +157,13 @@ class CovarianceOptimizer():
 
     def obj_fun (self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
-        Imc = self.get_mc_intens(s).get()
+        #Imc = self.get_mc_intens(s).get()
 
         if self.dims_code & 8 != 0:
             Imc = self.get_mc_intens(s[:-2])
             Icalc = self.liquidize(Imc, s[-2], s[-1]).get()
         else:
-            Icalc = Imc
+            Icalc = self.get_mc_intens(s) 
             
         if self.do_aniso:
             radavg = self.get_radavg(Icalc)
