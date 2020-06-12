@@ -2,3 +2,7 @@
 
 # Data directory
 /data
+
+# All ini files except config.ini
+*.ini
+~config.ini
