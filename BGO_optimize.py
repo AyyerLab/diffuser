@@ -42,7 +42,8 @@ class CovarianceOptimizer():
         self.dims = []
         self.get_dims()
 
-        self.intrad, self.radsel = self.get_radsel(self.size, 10, self.size // 4)
+        self.intrad, self.voxmask = self.get_radsel(self.size, 10, self.size // 2)
+        self.voxmask &= ~np.isnan(self.Itarget)
         self.radcount = None
         if self.do_aniso:
             radavg = self.get_radavg(self.Itarget)
@@ -170,10 +171,10 @@ class CovarianceOptimizer():
             Icalc -= radavg[self.intrad]
 
         if self.do_weighting:
-            cov = np.cov(Icalc[self.radsel], self.Itarget[self.radsel], aweights=1./self.intrad[self.radsel]**2)
+            cov = np.cov(Icalc[self.voxmask], self.Itarget[self.voxmask], aweights=1./self.intrad[self.voxmask]**2)
             retval = 1. - cov[0, 1] / np.sqrt(cov[0,0] * cov[1,1])
         else:
-            retval = 1. - np.corrcoef(Icalc[self.radsel], self.Itarget[self.radsel])[0,1]
+            retval = 1. - np.corrcoef(Icalc[self.voxmask], self.Itarget[self.voxmask])[0,1]
 
         return float(retval)
 
