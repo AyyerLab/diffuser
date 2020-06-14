@@ -164,7 +164,7 @@ class CovarianceOptimizer():
             Imc = self.get_mc_intens(s[:-2])
             Icalc = self.liquidize(Imc, s[-2], s[-1]).get()
         else:
-            Icalc = self.get_mc_intens(s) 
+            Icalc = self.get_mc_intens(s).get()
             
         if self.do_aniso:
             radavg = self.get_radavg(Icalc)
@@ -188,9 +188,10 @@ class CovarianceOptimizer():
     def get_radavg(self, intens):
         if self.radcount is None:
             self.radcount = np.zeros(self.intrad.max() + 1)
-            np.add.at(self.radcount, self.intrad, 1)
+            np.add.at(self.radcount, self.intrad[self.voxmask], 1)
+            self.radcount[self.radcount == 0] = 1
         radavg = np.zeros_like(self.radcount)
-        np.add.at(radavg, self.intrad, intens)
+        np.add.at(radavg, self.intrad[self.voxmask], intens[self.voxmask])
         return radavg / self.radcount
 
 if __name__ == '__main__':
