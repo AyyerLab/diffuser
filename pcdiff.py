@@ -84,7 +84,7 @@ class PCDiffuse():
 
         # Get PC vectors
         with h5py.File(vecs_fname, 'r') as f:
-            self.vecs = cp.array(f['vecs'][:])
+            self.vecs = cp.array(f['vecs'][:].astype('f4'))
             #self.vec_weights = cp.array(f['weights'][:])
             self.cov_weights = cp.array(f['cov_weights'][:])
             # Check number of components = 3N
