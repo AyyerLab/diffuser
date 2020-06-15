@@ -36,6 +36,8 @@ class CovarianceOptimizer():
         self.llm_sigma_bounds = tuple([float(s) for s in conf.get('optimizer', 'LLM_sigma_A_bounds', fallback = '0 0').split()])
         self.llm_gamma_bounds = tuple([float(s) for s in conf.get('optimizer', 'LLM_gamma_A_bounds', fallback = '0 0').split()])
         self.uncorr_bounds = tuple([float(s) for s in conf.get('optimizer', 'uncorr_sigma_A_bounds', fallback = '0 0').split()])
+        self.rbd_bounds = tuple([float(s) for s in conf.get('optimizer', 'RBD_sigma_A_bounds', fallback = '0 0').split()])
+        self.rbr_bounds = tuple([float(s) for s in conf.get('optimizer', 'RBR_sigma_deg_bounds', fallback = '0 0').split()])
         self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
         self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
         rad_range = tuple([float(s) for s in conf.get('optimizer', 'radius_range', fallback = '10 %d'%(self.size//2)).split()])
@@ -81,6 +83,8 @@ class CovarianceOptimizer():
         llmsb = self.llm_sigma_bounds
         llmgb = self.llm_gamma_bounds
         ucb = self.uncorr_bounds
+        rbd = self.rbd_bounds
+        rbr = self.rbr_bounds
 
         self.dims_code = 0 # No optimization
         if  db[1] - db[0] != 0:
@@ -92,8 +96,14 @@ class CovarianceOptimizer():
         if ucb[1] - ucb[0] != 0:
             self.dims_code += 4
             print('Optimizing uncorrelated variance')
-        if llmsb[1] - llmsb[0] != 0 and llmgb[1] - llmgb[0] !=0:
+        if rbd[1] - rbd[0] != 0:
             self.dims_code += 8
+            print('Optimizing rigid body translations')
+        if rbr[1] - rbr[0] != 0:
+            self.dims_code += 16
+            print('Optimizing rigid body rotations')
+        if llmsb[1] - llmsb[0] != 0 and llmgb[1] - llmgb[0] !=0:
+            self.dims_code += 32
             print('Optimizing LLM parameters')
 
         for i in range(self.num_vecs):
@@ -107,8 +117,14 @@ class CovarianceOptimizer():
             self.dims += [skopt.space.Real(*ucb, name='Uncorr_A')]
 
         if self.dims_code & 8 != 0:
-            self.dims += [skopt.space.Real(*llmsb, name ='LLM_sigma_A')]
-            self.dims += [skopt.space.Real(*llmgb, name ='LLM_gamma_A')]
+            self.dims += [skopt.space.Real(*rbd, name='RBD_A')]
+
+        if self.dims_code & 16 != 0:
+            self.dims += [skopt.space.Real(*rbr, name='RBR_deg')]
+
+        if self.dims_code & 32 != 0:
+            self.dims += [skopt.space.Real(*llmsb, name='LLM_sigma_A')]
+            self.dims += [skopt.space.Real(*llmgb, name='LLM_gamma_A')]
 
         print(len(self.dims), 'dimensional optimization')
 
@@ -135,13 +151,23 @@ class CovarianceOptimizer():
         if self.dims_code & 4 != 0:
             self.pcd.sigma_uncorr_A = s[n]
             n += 1
+        if self.dims_code & 8 != 0:
+            self.pcd.cov_vox = s[n]**2 * np.identity(3)
+            n += 1
+        if self.dims_code & 16 != 0:
+            self.pcd.sigma_deg = s[n]
+            n += 1
 
         self.pcd.run_mc()
         Imc = self.pcd.diff_intens
-        if self.dims_code & 8 != 0:
+        if self.dims_code & 32 != 0:
             Icalc = self.liquidize(cp.array(Imc), s[-2], s[-1]).get()
         else:
             Icalc = Imc
+
+        if self.point_group == '222':
+            Icalc = 0.25 * (Icalc + Icalc[::-1] + Icalc[:,::-1] + Icalc[:,:,::-1])
+
         return Icalc
 
     def liquidize(self, intens, sigma_A, gamma_A):
@@ -172,9 +198,6 @@ class CovarianceOptimizer():
         if self.do_aniso:
             radavg = self.get_radavg(Icalc)
             Icalc -= radavg[self.intrad]
-
-        if self.point_group == '222':
-            Icalc = 0.25 * (Icalc + Icalc[::-1] + Icalc[:,::-1] + Icalc[:,:,::-1])
 
         if self.do_weighting:
             cov = np.cov(Icalc[self.voxmask], self.Itarget[self.voxmask], aweights=1./self.intrad[self.voxmask]**2)
