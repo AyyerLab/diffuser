@@ -77,7 +77,7 @@ class PCDiffuse():
         atoms = univ.select_atoms(sel_string)
         self.avg_pos = cp.array(atoms.positions)
         self.avg_pos -= self.avg_pos.mean(0)
-        
+
         # Get approximate F_0: this hack works for low-Z atoms (mass = 2Z)
         self.atom_f0 = (cp.array([np.around(a.mass) for a in atoms]) / 2.).astype('f4')
         self.atom_f0[self.atom_f0 == 0.5] = 1. # Hydrogens
@@ -118,21 +118,52 @@ class PCDiffuse():
         arr = np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
         return cp.array(arr).astype('f4')
 
+    def _random_rot(self):
+        qq = 2.
+        while True:
+            quat = np.random.normal(0, 0.1, 4)
+            qq = np.linalg.norm(quat)
+            if qq < 1:
+                quat /= qq
+                break
+        rotmatrix = np.array([
+            [1 - 2*q[2]**2 - 2*q[3]**2, 2*q[1]*q[2] - 2*q[3]*q[0], 2*q[1]*q[3] + 2*q[2]*q[0]],
+            [2*q[1]*q[2] + 2*q[3]*q[0], 1 - 2*q[1]**2 - 2*q[3]**2, 2*q[2]*q[3] - 2*q[1]*q[0]],
+            [2*q[1]*q[3] - 2*q[2]*q[0], 2*q[2]*q[3] + 2*q[1]*q[0], 1 - 2*q[1]**2 - 2*q[2]**2]])
+        return cp.array(rotmatrix.astype('f4'))
+
+    def _random_small_rot(self, sigma_deg):
+        angle = np.random.normal(0, sigma_deg*np.pi/180)
+        while True:
+            v = np.random.random(3)
+            norm = np.linalg.norm(v)
+            if norm < 1:
+                v /= norm
+                break
+        tilde = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        rotmatrix = np.cos(angle)*np.identity(3) + np.sin(angle)*tilde + (1. - np.cos(angle))*(np.dot(tilde, tilde) + np.identity(3))
+
+        return cp.array(rotmatrix.astype('f4'))
+
     def gen_random_dens(self):
         '''Generate electron density by randomly distorting average molecule
-        
+
         Applies distortions along principal component vectors followed by
         rigid body translations and rotations
         '''
         # Generate distorted molecule
-        #projs = cp.random.normal(cp.zeros(self.num_vecs), self.vec_weights, size=self.num_vecs, dtype='f4')
-        projs = cp.array(np.random.multivariate_normal(np.zeros(self.num_vecs), self.cov_weights.get())).astype('f4')
-        curr_pos = self.avg_pos + cp.dot(self.vecs, projs).reshape(3,-1).T
-        
+        if np.linalg.norm(self.cov_weights.get()) > 0.:
+            #projs = cp.random.normal(cp.zeros(self.num_vecs), self.vec_weights, size=self.num_vecs, dtype='f4')
+            projs = cp.array(np.random.multivariate_normal(np.zeros(self.num_vecs), self.cov_weights.get())).astype('f4')
+            curr_pos = self.avg_pos + cp.dot(self.vecs, projs).reshape(3,-1).T
+        else:
+            curr_pos = cp.copy(self.avg_pos)
+
         # Apply rigid body motions
         curr_pos += cp.array(np.random.multivariate_normal(np.zeros(3), self.cov_vox)).astype('f4')
-        curr_pos = cp.dot(curr_pos, self._gen_rotz(np.random.randn() * self.sigma_deg * np.pi / 180))
-        
+        #curr_pos = cp.dot(curr_pos, self._gen_rotz(np.random.randn() * self.sigma_deg * np.pi / 180))
+        curr_pos = cp.dot(curr_pos, self._random_small_rot(self.sigma_deg))
+
         # Apply uncorrelated displacements
         if self.sigma_uncorr_A > 0.:
             curr_pos += cp.random.randn(*curr_pos.shape) * self.sigma_uncorr_A
@@ -155,7 +186,7 @@ class PCDiffuse():
 
     def gen_proj_dens(self, mode, weight):
         '''Generate electron density by distorting average molecule by given mode and weight
-        
+
         Applies distortion along specific principal component vector
         No rigid body translations and rotations
         '''
@@ -205,7 +236,7 @@ class PCDiffuse():
     def run_linear(self, mode, sigma):
         params = cp.linspace(-4*sigma, 4*sigma, self.num_steps, dtype='f4')
         norm_weights = cp.exp(-params**2/2./sigma**2)
-    
+
         self._initialize()
         for i in range(self.num_steps):
             dens = self.gen_proj_dens(mode, params[i])
@@ -223,7 +254,7 @@ class PCDiffuse():
 
         self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
         self.diff_intens = self.diff_intens.get()
-    
+
     def save(self, out_fname):
         print('Writing intensities to', out_fname)
         with mrcfile.new(out_fname, overwrite=True) as f:
@@ -233,7 +264,7 @@ class PCDiffuse():
 
 def main():
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Diffuse from PC-distorted molecules')
     parser.add_argument('config_file', help='Path to config file')
     parser.add_argument('-d', '--device', help='GPU device number. Default: 0', type=int, default=0)
