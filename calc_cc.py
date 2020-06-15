@@ -1,10 +1,7 @@
 import csv
 import mrcfile
 import numpy
-<<<<<<< HEAD
 import h5py
-=======
->>>>>>> cb607fda28558b564f3462bfc00b53b6aef0e728
 try:
     import cupy as np
     from cupyx.scipy import ndimage
@@ -18,40 +15,44 @@ except ImportError:
 
 def calc_rad(size, binning):
     cen = size // 2
-    ind = np.linspace(-cen, cen, size)
-    x, y, z = np.meshgrid(ind, ind, ind)
+    ind = np.arange(size, dtype='f4') - cen
+    x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
     rad = np.sqrt(x*x + y*y + z*z)
     return rad, np.rint(rad / binning).astype('i4')
 
-def subtract_radavg(vol, intrad, num_bins):
+def subtract_radavg(vol, intrad, num_bins, mask=None):
     radavg = np.zeros(num_bins)
     radcount = np.zeros(num_bins)
+    if mask is None:
+        mask = ~np.isnan(vol)
     
     if CUPY:
-        cupyx.scatter_add(radcount, intrad, 1)
-        cupyx.scatter_add(radavg, intrad, vol)
+        cupyx.scatter_add(radcount, intrad[mask], 1)
+        cupyx.scatter_add(radavg, intrad[mask], vol[mask])
     else:
-        np.add.at(radcount, intrad, 1)
-        np.add.at(radavg, intrad, vol)
+        np.add.at(radcount, intrad[mask], 1)
+        np.add.at(radavg, intrad[mask], vol[mask])
     sel = (radcount > 0)
     radavg[sel] /= radcount[sel]
 
     vol -= radavg[intrad]
     return radavg
 
-def calc_cc(vol1, vol2, intrad, num_bins):
+def calc_cc(vol1, vol2, intrad, num_bins, mask=None):
     v1v2 = np.zeros(num_bins)
     v1v1 = np.zeros(num_bins)
     v2v2 = np.zeros(num_bins)
+    if mask is None:
+        mask = ~(np.isnan(vol1) | np.isnan(vol2))
 
     if CUPY:
-        cupyx.scatter_add(v1v2, intrad, vol1*vol2)
-        cupyx.scatter_add(v1v1, intrad, vol1**2)
-        cupyx.scatter_add(v2v2, intrad, vol2**2)
+        cupyx.scatter_add(v1v2, intrad[mask], vol1[mask]*vol2[mask])
+        cupyx.scatter_add(v1v1, intrad[mask], vol1[mask]**2)
+        cupyx.scatter_add(v2v2, intrad[mask], vol2[mask]**2)
     else:
-        np.add.at(v1v2, intrad, vol1*vol2)
-        np.add.at(v1v1, intrad, vol1**2)
-        np.add.at(v2v2, intrad, vol2**2)
+        np.add.at(v1v2, intrad[mask], vol1[mask]*vol2[mask])
+        np.add.at(v1v1, intrad[mask], vol1[mask]**2)
+        np.add.at(v2v2, intrad[mask], vol2[mask]**2)
 
     denr = v1v1 * v2v2
     sel = (denr > 0)
@@ -88,6 +89,7 @@ def main():
     #    vol2 = np.array(np.copy(f.data))
     with h5py.File(args.volume2, 'r') as f:
         vol2 = np.array(f['diff_intens'][:])
+    mask = ~(np.isnan(vol1) | np.isnan(vol2))
     
     assert vol1.shape == vol2.shape
     size = vol1.shape[-1]
@@ -95,10 +97,10 @@ def main():
     rad, rbin = calc_rad(size, args.bin_size)
     num_bins = int(rbin.max() + 1)
 
-    subtract_radavg(vol1, rbin, num_bins)
-    subtract_radavg(vol2, rbin, num_bins)
+    subtract_radavg(vol1, rbin, num_bins, mask)
+    subtract_radavg(vol2, rbin, num_bins, mask)
 
-    cc = calc_cc(vol1, vol2, rbin, num_bins)
+    cc = calc_cc(vol1, vol2, rbin, num_bins, mask)
 
     if args.res_edge > 0.:
         cen = size//2
