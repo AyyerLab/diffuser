@@ -137,7 +137,12 @@ class CovarianceOptimizer():
             n += 1
 
         self.pcd.run_mc()
-        return cp.array(self.pcd.diff_intens)
+        Imc = self.pcd.diff_intens
+        if self.dims_code & 8 != 0:
+            Icalc = self.liquidize(cp.array(Imc), s[-2], s[-1]).get()
+        else:
+            Icalc = Imc
+        return Icalc
 
     def liquidize(self, intens, sigma_A, gamma_A):
         cen = self.size // 2
@@ -162,13 +167,7 @@ class CovarianceOptimizer():
 
     def obj_fun (self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
-        #Imc = self.get_mc_intens(s).get()
-
-        if self.dims_code & 8 != 0:
-            Imc = self.get_mc_intens(s[:-2])
-            Icalc = self.liquidize(Imc, s[-2], s[-1]).get()
-        else:
-            Icalc = self.get_mc_intens(s).get()
+        Icalc = self.get_mc_intens(s)
 
         if self.do_aniso:
             radavg = self.get_radavg(Icalc)
