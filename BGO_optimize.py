@@ -39,7 +39,10 @@ class CovarianceOptimizer():
         self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
         self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
         rad_range = tuple([float(s) for s in conf.get('optimizer', 'radius_range', fallback = '10 %d'%(self.size//2)).split()])
+        self.point_group = conf.get('optimizer', 'point_group', fallback='1')
 
+        if self.point_group not in ['1', '222']:
+            raise ValueError('%s point group not implemented' % self.point_group)
         self.dims = []
         self.get_dims()
 
@@ -69,7 +72,7 @@ class CovarianceOptimizer():
             verbose = True,
             x0 = x0,
             y0 = y0,
-            **kwargs 
+            **kwargs
             )
 
     def get_dims(self):
@@ -89,7 +92,7 @@ class CovarianceOptimizer():
         if ucb[1] - ucb[0] != 0:
             self.dims_code += 4
             print('Optimizing uncorrelated variance')
-        if llmsb[1] - llmsb[0] != 0 and llmgb[1] - llmgb[0] !=0: 
+        if llmsb[1] - llmsb[0] != 0 and llmgb[1] - llmgb[0] !=0:
             self.dims_code += 8
             print('Optimizing LLM parameters')
 
@@ -99,14 +102,14 @@ class CovarianceOptimizer():
                     self.dims += [skopt.space.Real(*db, name='X_%d_%d'%(i,j))]
                 elif self.dims_code & 2 != 0:
                     self.dims += [skopt.space.Real(*odb, name='X_%d_%d'%(i,j))]
-        
+
         if self.dims_code & 4 != 0:
             self.dims += [skopt.space.Real(*ucb, name='Uncorr_A')]
 
         if self.dims_code & 8 != 0:
             self.dims += [skopt.space.Real(*llmsb, name ='LLM_sigma_A')]
             self.dims += [skopt.space.Real(*llmgb, name ='LLM_gamma_A')]
-        
+
         print(len(self.dims), 'dimensional optimization')
 
     def get_mc_intens(self, s):
@@ -116,7 +119,7 @@ class CovarianceOptimizer():
         sigmas_diag = cp.array(res_5vecs_diag.x)
         self.pcd.cov_weights = self.pcd.cov_weights * sigmas_diag**2
         '''
-        
+
         self.pcd.cov_weights[:] = 0.
         n = 0
         for i in range(self.num_vecs):
@@ -128,7 +131,7 @@ class CovarianceOptimizer():
                     self.pcd.cov_weights[i, j] = s[n]
                     self.pcd.cov_weights[j, i] = s[n]
                     n += 1
-                    
+
         if self.dims_code & 4 != 0:
             self.pcd.sigma_uncorr_A = s[n]
             n += 1
@@ -166,10 +169,13 @@ class CovarianceOptimizer():
             Icalc = self.liquidize(Imc, s[-2], s[-1]).get()
         else:
             Icalc = self.get_mc_intens(s).get()
-            
+
         if self.do_aniso:
             radavg = self.get_radavg(Icalc)
             Icalc -= radavg[self.intrad]
+
+        if self.point_group == '222':
+            Icalc = 0.25 * (Icalc + Icalc[::-1] + Icalc[:,::-1] + Icalc[:,:,::-1])
 
         if self.do_weighting:
             cov = np.cov(Icalc[self.voxmask], self.Itarget[self.voxmask], aweights=1./self.intrad[self.voxmask]**2)
