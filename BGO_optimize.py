@@ -38,11 +38,12 @@ class CovarianceOptimizer():
         self.uncorr_bounds = tuple([float(s) for s in conf.get('optimizer', 'uncorr_sigma_A_bounds', fallback = '0 0').split()])
         self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
         self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
+        rad_range = tuple([float(s) for s in conf.get('optimizer', 'radius_range', fallback = '10 %d'%(self.size//2)).split()])
 
         self.dims = []
         self.get_dims()
 
-        self.intrad, self.voxmask = self.get_radsel(self.size, 10, self.size // 2)
+        self.intrad, self.voxmask = self.get_radsel(self.size, rad_range[0], rad_range[1])
         self.voxmask &= ~np.isnan(self.Itarget)
         self.radcount = None
         if self.do_aniso:
