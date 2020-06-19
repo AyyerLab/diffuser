@@ -102,11 +102,11 @@ class PCDiffuse():
 
         # B_sol filter for support mask
         cen = self.size//2
-        ind = cp.linspace(-cen, cen, self.size)
-        x, y, z = cp.meshgrid(ind, ind, ind, indexing='ij')
-        q = cp.sqrt(x*x + y*y + z*z) / cen / self.res_edge
+        ind = np.linspace(-cen, cen, self.size, dtype='f4')
+        x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
+        q = np.sqrt(x*x + y*y + z*z) / cen / self.res_edge
         # 30 A^2 B_sol
-        self.b_sol_filt = cp.fft.ifftshift(cp.exp(-30 * q * q))
+        self.b_sol_filt = cp.array(np.fft.ifftshift(np.exp(-30 * q * q)))
 
         if self.out_fname is None:
             self.out_fname = op.splitext(pdb_fname)[0] + '_diffcalc.ccp4'
