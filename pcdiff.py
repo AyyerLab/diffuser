@@ -4,6 +4,7 @@ import sys
 import os.path as op
 import configparser
 import numpy as np
+from scipy import special
 import h5py
 import cupy as cp
 from cupyx.scipy import ndimage
@@ -104,9 +105,10 @@ class PCDiffuse():
         cen = self.size//2
         ind = np.linspace(-cen, cen, self.size, dtype='f4')
         x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        q = np.sqrt(x*x + y*y + z*z) / cen / self.res_edge
+        self.nrad = cp.array(np.sqrt(x*x + y*y + z*z).astype('f4') / cen)
+        self.nrad[self.nrad == 0.] = 0.1 / cen
         # 30 A^2 B_sol
-        self.b_sol_filt = cp.array(np.fft.ifftshift(np.exp(-30 * q * q)))
+        self.b_sol_filt = np.fft.ifftshift(np.exp(-30 * self.nrad**2 / self.res_edge**2))
 
         if self.out_fname is None:
             self.out_fname = op.splitext(pdb_fname)[0] + '_diffcalc.ccp4'
@@ -254,6 +256,28 @@ class PCDiffuse():
 
         self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
         self.diff_intens = self.diff_intens.get()
+
+    def liquidize(self, intens, sigma_A, gamma_A):
+        cen = self.size // 2
+        s_sq = (2. * cp.pi * sigma_A * self.nrad / self.res_edge)**2
+        patt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(intens)))
+
+        slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j) for n in range(1,150)])
+        if slimits.max() > 2. * np.pi * sigma_A / self.res_edge:
+            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_edge)[0][0] + 1
+        else:
+            print('No effect of liquid-like motions with these parameters')
+            return intens
+
+        liq = cp.zeros_like(intens)
+        for n in range(n_max):
+            kernel = cp.exp(-n * self.res_edge * cen * self.nrad / gamma_A)
+            weight = cp.exp(-s_sq + n*cp.log(s_sq) - float(special.loggamma(n+1)))
+            liq += weight * cp.abs(cp.fft.fftshift(cp.fft.ifftn(patt * kernel)))
+            sys.stderr.write('\rLiquidizing: %d/%d' % (n+1, n_max))
+        sys.stderr.write('\n')
+
+        return liq
 
     def save(self, out_fname):
         print('Writing intensities to', out_fname)

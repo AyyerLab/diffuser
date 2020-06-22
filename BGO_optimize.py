@@ -3,7 +3,6 @@ import configparser
 import numpy as np
 import cupy as cp
 from cupyx.scipy import ndimage as cndimage
-from scipy import special
 import h5py
 import skopt
 from skopt import forest_minimize
@@ -161,7 +160,7 @@ class CovarianceOptimizer():
         self.pcd.run_mc()
         Imc = self.pcd.diff_intens
         if self.dims_code & 32 != 0:
-            Icalc = self.liquidize(cp.array(Imc), s[-2], s[-1]).get()
+            Icalc = self.pcd.liquidize(cp.array(Imc), s[-2], s[-1]).get()
         else:
             Icalc = Imc
 
@@ -169,27 +168,6 @@ class CovarianceOptimizer():
             Icalc = 0.25 * (Icalc + Icalc[::-1] + Icalc[:,::-1] + Icalc[:,:,::-1])
 
         return Icalc
-
-    def liquidize(self, intens, sigma_A, gamma_A):
-        cen = self.size // 2
-        ind = cp.arange(self.size).astype('f8') - cen
-        x, y, z = cp.meshgrid(ind, ind, ind, indexing='ij')
-        nrad = cp.sqrt(x*x + y*y + z*z) / cen
-
-        q_Ainv = cp.array(nrad / self.res_edge_A)
-        s_sq = (2. * cp.pi * sigma_A * q_Ainv)**2
-        patt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(intens)))
-
-        liq = cp.zeros_like(intens)
-        slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j) for n in range(1,150)])
-        n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_edge_A)[0][0] + 1
-        for n in range(n_max):
-            kernel = cp.exp(-n * self.res_edge_A * cen * nrad / gamma_A)
-            liq += cp.exp(-s_sq) * s_sq**n / float(special.factorial(n)) * cp.abs(cp.fft.fftshift(cp.fft.ifftn(patt * kernel)))
-            sys.stderr.write('\rLiquidizing: %d/%d' % (n+1, n_max))
-        sys.stderr.write('\n')
-
-        return liq
 
     def obj_fun (self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
