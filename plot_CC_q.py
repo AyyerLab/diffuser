@@ -13,10 +13,10 @@ import argparse
 def main():
     parser = argparse.ArgumentParser(description=' 1. Imc calculator with BGO optimized s vectors; 2. Estimate anisotropic CC between Itarget and Imc; 3. Plotting CC v/s q')
     parser.add_argument('config_file', help ='Path to config file')
-    parser.add_argument('-mc', '--run_mc', help = 'Calculate Imc with BGO optimized  s vectors. Default = False', action ='store_true')
-    parser.add_argument('-i', '--diff_intens', help='Path to Imc diff_intens files.')
+    parser.add_argument('-mc', '--get_mc_intens', help = 'Calculate Icalc with BGO optimized  s vectors. Default = False', action ='store_true')
+    parser.add_argument('-i','--diff_intens', help='Path to Icalc diff_intens files.')
     parser.add_argument('-c', '--corr_q', help ='Path to cc/radius/q file.')
-    parser.add_argument('-o', '--out_fname', help ='Path to output files.')
+    parser.add_argument('-o', '--out_fname', help ='Path to output files for intensity and CC.')
     parser.add_argument('-d', '--device', help = 'GPU device ID(if applicable). Default:0', type = int, default=0)
     
     args = parser.parse_args()
@@ -28,10 +28,16 @@ def main():
         
     pcd = opt.pcd
     num_vecs = opt.num_vecs
+    
+    
     #get s vecs(cov_weights) for run_mc() from BGO optimization
+    
     output_fname = opt.output_fname
     res = skopt.load(output_fname)
-    s = np.array(res.x)
+    s = res.x
+    print('s' + str(s))
+    obj_func = res.fun
+    print('Obj_func' +  str(obj_func))
 
     # get only the diagonals of cov_weights
     ''' sdiag =[]
@@ -44,11 +50,10 @@ def main():
     '''
     #get Itarget
     Itarget = opt.Itarget
+   
 
-    def get_cc_q(Imc, Itarget):
+    def get_cc_q(Vol1, Vol2):
         ###CC between Itarget and Imc
-        Vol1 = cp.array(Itarget)
-        Vol2 = cp.array(Imc)
         
         #cal cc
         assert Vol1.shape == Vol2.shape
@@ -56,44 +61,51 @@ def main():
         bin_size = 1
         rad, rbin = calc_cc.calc_rad(size, bin_size)
         num_bins = int(rbin.max() +1)
+        mask = ~(np.isnan(Vol1) | np.isnan(Vol2))
+         
+        calc_cc.subtract_radavg(Vol1, rbin, num_bins, mask)
+        calc_cc.subtract_radavg(Vol2, rbin, num_bins, mask) 
 
-        calc_cc.subtract_radavg(Vol1, rbin, num_bins)
-        calc_cc.subtract_radavg(Vol2, rbin, num_bins) 
-
-        cc = calc_cc.calc_cc(Vol1, Vol2, rbin, num_bins)
+        cc = calc_cc.calc_cc(Vol1, Vol2, rbin, num_bins, mask)
         cc = cc.get()    
         
         # cal q
-        res_edge = 1.35
+        res_edge = opt.res_edge_A
         cen = size //2
         q = np.arange(num_bins) * bin_size / cen / res_edge
         return(cc, q)
 
 
 
-    if args.run_mc: 
+    if args.get_mc_intens: 
         #calculate Imc and CC between Itarget
-        Imc = opt.get_mc_intens(s)
-        #Imc = opt.get_mc_intens(sdiag)
+        Icalc = opt.get_mc_intens(s)
+        
+        print('Writing Imc to', op.splitext(output_fname)[0]+'_mc_diffcalc.h5')
+        
+        with h5py.File(op.splitext(output_fname)[0]+'_mc_diffcalc.h5', 'w') as f:    
+             f['diff_intens'] = Icalc
+        
+        Vol1 = cp.array(Itarget) 
+        Vol2 = cp.array(Icalc) 
 
-        print('Writing Imc to', op.splitext(output_fname)[0]+'_diffcalc.h5')
-        with h5py.File(op.splitext(output_fname)[0]+'_diffcalc.h5', 'w') as f:    
-             f['diff_intens'] = Imc
-       
-        cc, q = get_cc_q(Imc, Itarget)
+        cc, q = get_cc_q(Vol1, Vol2)
 
         #saving cc/q
         if args.out_fname:
            calc_cc.save_to_file(args.out_fname, cc, q)
         else:   
-           calc_cc.save_to_file(op.splitext(output_fname)[0] +'_diffcalc_CC.dat', cc, q)
-    
+           calc_cc.save_to_file(op.splitext(output_fname)[0] +'_mc_diffcalc_CC.dat', cc, q)
+   
+
     elif args.diff_intens:
         #get Imc from saved file usindg -i option, calculate CC between Itarget
         with h5py.File(args.diff_intens, 'r') as f:
-            Imc = f['diff_intens'][:]
-       
-        cc, q = get_cc_q(Imc, Itarget)  
+            Icalc = f['diff_intens'][:]
+        
+        Vol1 = cp.array(Itarget)
+        Vol2 = cp.array(Icalc)
+        cc, q = get_cc_q(Vol1, Vol2)  
         fname = args.diff_intens 
         
         #saving cc/q
@@ -102,6 +114,8 @@ def main():
         else:    
             calc_cc.save_to_file(op.splitext(fname)[0] +'_CC.dat', cc, q)
     
+    
+
     else:
         #get cc and q from saved file using -c in command line 
         corr = np.loadtxt(args.corr_q, skiprows =1)
@@ -110,11 +124,11 @@ def main():
         fname = args.corr_q
     
     ##Plotting CC v/s q
-    ax = P.axes(xlim=(0, 1.4), ylim=(0, 1.0))
+    ax = P.axes(xlim=(0, q[-1]), ylim=(0, 1))
     P.plot(q, cc, 'r-')
     P.xlabel('q [1/$\AA$]')
-    P.ylabel ('CC')
-    P.title('CC v/s q')
+    P.ylabel ('Anisotropic CC')
+    P.title('simulation vs data')
     P.grid()
     P.show()
 
