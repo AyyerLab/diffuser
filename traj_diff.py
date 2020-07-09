@@ -248,7 +248,7 @@ class TrajectoryDiffuse():
         cc_fname = os.path.splitext(self.out_fname)[0] + '_cov.h5'
         print('Saving covariance matrix to', cc_fname)
 
-        mean_pos -= mean_pos.mean(0)
+        #mean_pos -= mean_pos.mean(0)
         if CUPY:
             mean_pos = mean_pos.get()
         dist = numpy.linalg.norm(numpy.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
