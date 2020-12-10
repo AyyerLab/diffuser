@@ -8,10 +8,12 @@ try:
     import cupyx
     CUPY = True
     np.disable_experimental_feature_warning = True
+    scatter_add = cupyx.scatter_add
 except ImportError:
     import numpy as np
     from scipy import ndimage
     CUPY = False
+    scatter_add = np.add.at
 
 def calc_rad(size, binning):
     cen = size // 2
@@ -26,12 +28,8 @@ def subtract_radavg(vol, intrad, num_bins, mask=None):
     if mask is None:
         mask = ~np.isnan(vol)
     
-    if CUPY:
-        cupyx.scatter_add(radcount, intrad[mask], 1)
-        cupyx.scatter_add(radavg, intrad[mask], vol[mask])
-    else:
-        np.add.at(radcount, intrad[mask], 1)
-        np.add.at(radavg, intrad[mask], vol[mask])
+    scatter_add(radcount, intrad[mask], 1)
+    scatter_add(radavg, intrad[mask], vol[mask])
     sel = (radcount > 0)
     radavg[sel] /= radcount[sel]
 
@@ -45,14 +43,9 @@ def calc_cc(vol1, vol2, intrad, num_bins, mask=None):
     if mask is None:
         mask = ~(np.isnan(vol1) | np.isnan(vol2))
 
-    if CUPY:
-        cupyx.scatter_add(v1v2, intrad[mask], vol1[mask]*vol2[mask])
-        cupyx.scatter_add(v1v1, intrad[mask], vol1[mask]**2)
-        cupyx.scatter_add(v2v2, intrad[mask], vol2[mask]**2)
-    else:
-        np.add.at(v1v2, intrad[mask], vol1[mask]*vol2[mask])
-        np.add.at(v1v1, intrad[mask], vol1[mask]**2)
-        np.add.at(v2v2, intrad[mask], vol2[mask]**2)
+    scatter_add(v1v2, intrad[mask], vol1[mask]*vol2[mask])
+    scatter_add(v1v1, intrad[mask], vol1[mask]**2)
+    scatter_add(v2v2, intrad[mask], vol2[mask]**2)
 
     denr = v1v1 * v2v2
     sel = (denr > 0)
