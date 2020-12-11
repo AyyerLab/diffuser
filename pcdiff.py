@@ -32,6 +32,7 @@ class PCDiffuse():
         vecs_fname = config.get('files', 'vecs_fname')
         self.out_fname = config.get('files', 'out_fname', fallback=None)
         qvox_fname = config.get('files', 'qvox_fname', fallback=None)
+        rlatt_fname = config.get('files', 'rlatt_fname', fallback=None)
 
         # Parameters
         self.size = [int(s) for s in config.get('parameters', 'size').split()]
@@ -98,6 +99,15 @@ class PCDiffuse():
             self.num_vecs = self.vec_weights.shape[0]
             '''
             print('Using %d pricipal-component vectors on %d atoms' % (self.vecs.shape[1], self.vecs.shape[0]//3))
+
+        # Get reciprocal lattice if defined
+        if rlatt_fname is None:
+            self.rlatt = None
+            self.lpatt = None
+        else:
+            with h5py.File(rlatt_fname, 'r') as f:
+                self.rlatt = cp.array(f['diff_intens'][:])
+            self.lpatt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(self.rlatt)))
 
         # B_sol filter for support mask
         cen = self.size // 2
@@ -189,6 +199,11 @@ class PCDiffuse():
 
         return self._calc_dens_pos(curr_pos)
 
+    def get_intens(self):
+        dens = self._calc_dens_pos(self.avg_pos)
+        fdens = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(dens)))
+        return cp.abs(fdens)**2
+
     def _calc_dens_pos(self, curr_pos):
         '''Calculate density from coordinates in Angstrom units'''
         dsize = cp.array(self.size)
@@ -231,7 +246,7 @@ class PCDiffuse():
         self.mean_intens /= self.denominator
 
         self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
-        self.diff_intens = self.diff_intens.get()
+        #self.diff_intens = self.diff_intens.get()
 
     def run_linear(self, mode, sigma):
         params = cp.linspace(-4*sigma, 4*sigma, self.num_steps, dtype='f4')
@@ -272,6 +287,27 @@ class PCDiffuse():
             weight = cp.exp(-s_sq + n*cp.log(s_sq) - float(special.loggamma(n+1)))
             liq += weight * cp.abs(cp.fft.fftshift(cp.fft.ifftn(patt * kernel)))
             sys.stderr.write('\rLiquidizing: %d/%d' % (n+1, n_max))
+        sys.stderr.write('\n')
+
+        return liq
+
+    def liqlatt(self, sigma_A, gamma_A):
+        if self.rlatt is None:
+            raise AttributeError('Provide rlatt to apply liqlatt')
+        s_sq = (2 * cp.pi * sigma_A * self.qrad)**2
+        slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j)
+                            for n in range(1,150)])
+        if slimits.max() > 2 * np.pi * sigma_A / self.res_max:
+            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_max)[0][0] + 1
+        else:
+            return self.rlatt
+
+        liq = cp.zeros_like(self.rlatt)
+        for n in range(1, n_max):
+            weight = cp.exp(-s_sq + n * cp.log(s_sq) - float(special.loggamma(n+1)))
+            kernel = cp.exp(-n * self.urad / gamma_A)
+            liq += weight * cp.abs(cp.fft.fftshift(cp.fft.ifftn(self.lpatt * kernel)))
+            sys.stderr.write('\rLiquidizing: %d/%d' % (n, n_max-1))
         sys.stderr.write('\n')
 
         return liq
