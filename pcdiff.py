@@ -108,6 +108,8 @@ class PCDiffuse():
         self.qrad = cp.array(np.linalg.norm(np.dot(self.qvox, np.array([x.ravel(), y.ravel(), z.ravel()])), axis=0).reshape(x.shape))
         # -- 30 A^2 B_sol
         self.b_sol_filt = cp.fft.ifftshift(cp.exp(-30 * self.qrad**2))
+        # -- Maximum res_edge
+        self.res_max = float(1. / max(self.qrad[0, cen[1], cen[2]], self.qrad[cen[0], 0, cen[2]], self.qrad[cen[0], cen[1], 0]))
 
         # u-vectors for LLM
         uvox = np.linalg.inv(self.qvox.T) / self.size
@@ -258,8 +260,8 @@ class PCDiffuse():
         patt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(intens)))
 
         slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j) for n in range(1,150)])
-        if slimits.max() > 2. * np.pi * sigma_A / self.res_edge.max():
-            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_edge.max())[0][0] + 1
+        if slimits.max() > 2. * np.pi * sigma_A / self.res_max:
+            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_max)[0][0] + 1
         else:
             print('No effect of liquid-like motions with these parameters')
             return intens
@@ -278,10 +280,6 @@ class PCDiffuse():
         print('Writing intensities to', out_fname)
         with mrcfile.new(out_fname, overwrite=True) as f:
             f.set_data(self.diff_intens.astype('f4'))
-            for key in f.header.cella.dtype.names:
-                f.header.cella[key] = (self.size[0] // 2) * self.res_edge
-                f.header.cellb[key] = (self.size[1] // 2) * self.res_edge
-                f.header.cellc[key] = (self.size[2] // 2) * self.res_edge
 
 def main():
     import argparse
