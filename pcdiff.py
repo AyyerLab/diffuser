@@ -296,11 +296,14 @@ class PCDiffuse():
             raise AttributeError('Provide rlatt to apply liqlatt')
         s_sq = (2 * cp.pi * sigma_A * self.qrad)**2
         slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j)
-                            for n in range(1,150)])
+                            for n in range(1, 150)])
         if slimits.max() > 2 * np.pi * sigma_A / self.res_max:
             n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_max)[0][0] + 1
         else:
             return self.rlatt
+
+        if n_max == 0:
+            return cp.ones_like(self.rlatt)
 
         liq = cp.zeros_like(self.rlatt)
         for n in range(1, n_max):
