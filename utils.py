@@ -73,13 +73,14 @@ def get_densproj(td, mean_pos, fvec, mtype='traj', size=301):
     tfvec = fvec.reshape(3,-1).T
 
     for i in range(num_frames):
-        td.univ.trajectory[i]
         if mtype == 'traj':
+            td.univ.trajectory[i]
             pos = td.atoms.positions - mean_pos
             dpos = np.dot(pos.T.ravel(), fvec) * tfvec
         elif mtype == 'linear':
             dpos = np.linspace(-20, 20, num_frames)[i] * tfvec
         elif mtype == 'raw':
+            td.univ.trajectory[i]
             dpos = td.atoms.positions - mean_pos
         pos = cp.array(mean_pos + dpos).astype('f4')
         pos /= 0.5 # 0.5 A voxel size

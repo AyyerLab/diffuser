@@ -18,39 +18,9 @@ class PCDiffuse():
         self._define_kernels()
 
     def _define_kernels(self):
-        self.k_gen_dens = cp.RawKernel(r'''
-        extern "C" __global__
-        void gen_dens(const float *positions,
-                      const float *atom_f0,
-                      const long long num_atoms,
-                      const long long size,
-                      float *dens) {
-            int n = blockIdx.x * blockDim.x + threadIdx.x ;
-            if (n >= num_atoms)
-                return ;
-
-            float tx = positions[n*3 + 0] ;
-            float ty = positions[n*3 + 1] ;
-            float tz = positions[n*3 + 2] ;
-            float val = atom_f0[n] ;
-            int ix = __float2int_rd(tx), iy = __float2int_rd(ty), iz = __float2int_rd(tz) ;
-            if ((ix < 0) || (ix > size - 2) ||
-                (iy < 0) || (iy > size - 2) ||
-                (iz < 0) || (iz > size - 2))
-                return ;
-            float fx = tx - ix, fy = ty - iy, fz = tz - iz ;
-            float cx = 1. - fx, cy = 1. - fy, cz = 1. - fz ;
-
-            atomicAdd(&dens[ix*size*size + iy*size + iz], val*cx*cy*cz) ;
-            atomicAdd(&dens[ix*size*size + iy*size + iz+1], val*cx*cy*fz) ;
-            atomicAdd(&dens[ix*size*size + (iy+1)*size + iz], val*cx*fy*cz) ;
-            atomicAdd(&dens[ix*size*size + (iy+1)*size + iz+1], val*cx*fy*fz) ;
-            atomicAdd(&dens[(ix+1)*size*size + iy*size + iz], val*fx*cy*cz) ;
-            atomicAdd(&dens[(ix+1)*size*size + iy*size + iz+1], val*fx*cy*fz) ;
-            atomicAdd(&dens[(ix+1)*size*size + (iy+1)*size + iz], val*fx*fy*cz) ;
-            atomicAdd(&dens[(ix+1)*size*size + (iy+1)*size + iz+1], val*fx*fy*fz) ;
-        }
-        ''', 'gen_dens')
+        with open('kernels.cu', 'r') as f:
+            kernels = cp.RawModule(code=f.read())
+        self.k_gen_dens = kernels.get_function('gen_dens')
 
     def _parse_config(self, config_file):
         config = configparser.ConfigParser()
@@ -63,8 +33,8 @@ class PCDiffuse():
         self.out_fname = config.get('files', 'out_fname', fallback=None)
 
         # Parameters
-        self.size = config.getint('parameters', 'size')
-        self.res_edge = config.getfloat('parameters', 'res_edge')
+        self.size = [int(s) for s in config.get('parameters', 'size').split()]
+        self.res_edge = [float(r) for r in config.get('parameters', 'res_edge').split()]
         self.sigma_deg = config.getfloat('parameters', 'sigma_deg', fallback=0.)
         sigma_vox = config.getfloat('parameters', 'sigma_vox', fallback=0.)
         self.sigma_uncorr_A = config.getfloat('parameters', 'sigma_uncorr_A', fallback=0.)
@@ -72,6 +42,22 @@ class PCDiffuse():
         self.num_steps = config.getint('parameters', 'num_steps')
 
         print('Parsed config file')
+
+        # Get volume
+        if len(self.size) == 1:
+            self.size = np.array(self.size * 3)
+        elif len(self.size) != 3:
+            raise ValueError('size parameter must be either 1 or 3 space-separated numbers')
+        else:
+            self.size = np.array(self.size)
+
+        # Get res_edge
+        if len(self.res_edge) == 1:
+            self.res_edge = np.array(self.res_edge * 3)
+        elif len(self.res_edge) != 3:
+            raise ValueError('res_edge parameter must be either 1 or 3 space-separated numbers')
+        else:
+            self.res_edge = np.array(self.res_edge)
 
         # Get centered coordinates
         univ = md.Universe(pdb_fname)
@@ -102,13 +88,23 @@ class PCDiffuse():
             print('Using %d pricipal-component vectors on %d atoms' % (self.vecs.shape[1], self.vecs.shape[0]//3))
 
         # B_sol filter for support mask
-        cen = self.size//2
-        ind = np.linspace(-cen, cen, self.size, dtype='f4')
-        x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        self.nrad = cp.array(np.sqrt(x*x + y*y + z*z).astype('f4') / cen)
-        self.nrad[self.nrad == 0.] = 0.1 / cen
+        cen = self.size // 2
+        x, y, z = np.meshgrid(np.arange(self.size[0], dtype='f4') - self.size[0]//2,
+                              np.arange(self.size[1], dtype='f4') - self.size[1]//2,
+                              np.arange(self.size[2], dtype='f4') - self.size[2]//2,
+                              indexing='ij')
+        self.qrad = cp.array(np.sqrt((x / cen[0] / self.res_edge[0])**2 +
+                                     (y / cen[1] / self.res_edge[1])**2 +
+                                     (z / cen[2] / self.res_edge[2])**2))
+        self.qrad[self.qrad == 0.] = 0.1 / cen.max() / self.res_edge.max()
+
+        # u-vectors for LLM
+        self.urad = cp.array(np.sqrt((x * self.res_edge[0] / 2)**2 +
+                                     (y * self.res_edge[1] / 2)**2 +
+                                     (z * self.res_edge[2] / 2)**2))
+
         # 30 A^2 B_sol
-        self.b_sol_filt = np.fft.ifftshift(np.exp(-30 * self.nrad**2 / self.res_edge**2))
+        self.b_sol_filt = np.fft.ifftshift(np.exp(-30 * self.qrad**2))
 
         if self.out_fname is None:
             self.out_fname = op.splitext(pdb_fname)[0] + '_diffcalc.ccp4'
@@ -134,7 +130,8 @@ class PCDiffuse():
             [2*q[1]*q[3] - 2*q[2]*q[0], 2*q[2]*q[3] + 2*q[1]*q[0], 1 - 2*q[1]**2 - 2*q[2]**2]])
         return cp.array(rotmatrix.astype('f4'))
 
-    def _random_small_rot(self, sigma_deg):
+    @staticmethod
+    def _random_small_rot(sigma_deg):
         angle = np.random.normal(0, sigma_deg*np.pi/180)
         while True:
             v = np.random.random(3)
@@ -170,21 +167,7 @@ class PCDiffuse():
         if self.sigma_uncorr_A > 0.:
             curr_pos += cp.random.randn(*curr_pos.shape) * self.sigma_uncorr_A
 
-        # Convert to voxel units
-        curr_pos *= 2. / self.res_edge
-        curr_pos += self.size // 2
-
-        # Generate density grid
-        n_atoms = len(curr_pos)
-        dens = cp.zeros(3*(self.size,), dtype='f4')
-        self.k_gen_dens((n_atoms//32+1,), (32,), (curr_pos, self.atom_f0, n_atoms, self.size, dens))
-
-        # Solvent mask filtering
-        mask = (dens<0.2).astype('f4')
-        mask = cp.real(cp.fft.ifftn(cp.fft.fftn(mask)*self.b_sol_filt)) - 1
-        dens += mask
-
-        return dens
+        return self._calc_dens_pos(curr_pos)
 
     def gen_proj_dens(self, mode, weight):
         '''Generate electron density by distorting average molecule by given mode and weight
@@ -195,14 +178,20 @@ class PCDiffuse():
         # Generate distorted molecule
         curr_pos = self.avg_pos + self.vecs[:,mode].reshape(3,-1).T * weight
 
+        return self._calc_dens_pos(curr_pos)
+
+    def _calc_dens_pos(self, curr_pos):
+        '''Calculate density from coordinates in Angstrom units'''
+        dsize = cp.array(self.size)
+
         # Convert to voxel units
-        curr_pos *= 2. / self.res_edge
-        curr_pos += self.size // 2
+        curr_pos *= 2. / cp.array(self.res_edge)
+        curr_pos += dsize // 2
 
         # Generate density grid
         n_atoms = len(curr_pos)
-        dens = cp.zeros(3*(self.size,), dtype='f4')
-        self.k_gen_dens((n_atoms//32+1,), (32,), (curr_pos, self.atom_f0, n_atoms, self.size, dens))
+        dens = cp.zeros(tuple(self.size), dtype='f4')
+        self.k_gen_dens((n_atoms//32+1,), (32,), (curr_pos, self.atom_f0, n_atoms, dsize, dens))
 
         # Solvent mask filtering
         mask = (dens<0.2).astype('f4')
@@ -212,8 +201,8 @@ class PCDiffuse():
         return dens
 
     def _initialize(self):
-        self.mean_fdens = cp.zeros(3*(self.size,), dtype='c8')
-        self.mean_intens = cp.zeros(3*(self.size,), dtype='f4')
+        self.mean_fdens = cp.zeros(tuple(self.size), dtype='c8')
+        self.mean_intens = cp.zeros(tuple(self.size), dtype='f4')
         self.denominator = 0.
 
     def run_mc(self):
@@ -258,20 +247,19 @@ class PCDiffuse():
         self.diff_intens = self.diff_intens.get()
 
     def liquidize(self, intens, sigma_A, gamma_A):
-        cen = self.size // 2
-        s_sq = (2. * cp.pi * sigma_A * self.nrad / self.res_edge)**2
+        s_sq = (2. * cp.pi * sigma_A * self.qrad)**2
         patt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(intens)))
 
         slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j) for n in range(1,150)])
-        if slimits.max() > 2. * np.pi * sigma_A / self.res_edge:
-            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_edge)[0][0] + 1
+        if slimits.max() > 2. * np.pi * sigma_A / self.res_edge.max():
+            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_edge.max())[0][0] + 1
         else:
             print('No effect of liquid-like motions with these parameters')
             return intens
 
         liq = cp.zeros_like(intens)
         for n in range(n_max):
-            kernel = cp.exp(-n * self.res_edge * cen * self.nrad / gamma_A)
+            kernel = cp.exp(-n * self.urad / gamma_A)
             weight = cp.exp(-s_sq + n*cp.log(s_sq) - float(special.loggamma(n+1)))
             liq += weight * cp.abs(cp.fft.fftshift(cp.fft.ifftn(patt * kernel)))
             sys.stderr.write('\rLiquidizing: %d/%d' % (n+1, n_max))
@@ -284,7 +272,9 @@ class PCDiffuse():
         with mrcfile.new(out_fname, overwrite=True) as f:
             f.set_data(self.diff_intens.astype('f4'))
             for key in f.header.cella.dtype.names:
-                f.header.cella[key] = (self.size // 2) * self.res_edge
+                f.header.cella[key] = (self.size[0] // 2) * self.res_edge
+                f.header.cellb[key] = (self.size[1] // 2) * self.res_edge
+                f.header.cellc[key] = (self.size[2] // 2) * self.res_edge
 
 def main():
     import argparse

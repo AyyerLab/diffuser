@@ -28,35 +28,9 @@ class TrajectoryDiffuse():
             self._define_kernels()
 
     def _define_kernels(self):
-        self.k_gen_dens = np.RawKernel(r'''
-        extern "C" __global__
-        void gen_dens(const float *positions,
-                      const float *atom_f0,
-                      const long long num_atoms,
-                      const long long size,
-                      float *dens) {
-            int n = blockIdx.x * blockDim.x + threadIdx.x ;
-            if (n >= num_atoms)
-                return ;
-
-            float tx = positions[n*3 + 0] ;
-            float ty = positions[n*3 + 1] ;
-            float tz = positions[n*3 + 2] ;
-            float val = atom_f0[n] ;
-            int ix = __float2int_rd(tx), iy = __float2int_rd(ty), iz = __float2int_rd(tz) ;
-            float fx = tx - ix, fy = ty - iy, fz = tz - iz ;
-            float cx = 1. - fx, cy = 1. - fy, cz = 1. - fz ;
-
-            atomicAdd(&dens[ix*size*size + iy*size + iz], val*cx*cy*cz) ;
-            atomicAdd(&dens[ix*size*size + iy*size + iz+1], val*cx*cy*fz) ;
-            atomicAdd(&dens[ix*size*size + (iy+1)*size + iz], val*cx*fy*cz) ;
-            atomicAdd(&dens[ix*size*size + (iy+1)*size + iz+1], val*cx*fy*fz) ;
-            atomicAdd(&dens[(ix+1)*size*size + iy*size + iz], val*fx*cy*cz) ;
-            atomicAdd(&dens[(ix+1)*size*size + iy*size + iz+1], val*fx*cy*fz) ;
-            atomicAdd(&dens[(ix+1)*size*size + (iy+1)*size + iz], val*fx*fy*cz) ;
-            atomicAdd(&dens[(ix+1)*size*size + (iy+1)*size + iz+1], val*fx*fy*fz) ;
-        }
-        ''', 'gen_dens')
+        with open('kernels.cu', 'r') as f:
+            kernels = cp.RawModule(code=f.read())
+        self.k_gen_dens = kernels.get_function('gen_dens')
 
     def _parse_config(self, config_file):
         config = configparser.ConfigParser()
