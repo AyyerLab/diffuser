@@ -31,10 +31,11 @@ class PCDiffuse():
         sel_string = config.get('files', 'selection_string', fallback='all')
         vecs_fname = config.get('files', 'vecs_fname')
         self.out_fname = config.get('files', 'out_fname', fallback=None)
+        qvox_fname = config.get('files', 'qvox_fname', fallback=None)
 
         # Parameters
         self.size = [int(s) for s in config.get('parameters', 'size').split()]
-        self.res_edge = [float(r) for r in config.get('parameters', 'res_edge').split()]
+        res_edge = [float(r) for r in config.get('parameters', 'res_edge', fallback='0.').split()]
         self.sigma_deg = config.getfloat('parameters', 'sigma_deg', fallback=0.)
         sigma_vox = config.getfloat('parameters', 'sigma_vox', fallback=0.)
         self.sigma_uncorr_A = config.getfloat('parameters', 'sigma_uncorr_A', fallback=0.)
@@ -51,13 +52,24 @@ class PCDiffuse():
         else:
             self.size = np.array(self.size)
 
-        # Get res_edge
-        if len(self.res_edge) == 1:
-            self.res_edge = np.array(self.res_edge * 3)
-        elif len(self.res_edge) != 3:
-            raise ValueError('res_edge parameter must be either 1 or 3 space-separated numbers')
+        # Get voxel size in 3D
+        if qvox_fname is not None and res_edge != [0.]:
+            raise ValueError('Both res_edge and qvox_fname defined. Pick one.')
+        elif qvox_fname is not None:
+            with h5py.File(qvox_fname, 'r') as f:
+                self.qvox = f['q_voxel_size'][:]
+        elif res_edge != [0.]:
+            if len(res_edge) == 1 and res_edge[0] != 0.:
+                res_edge = np.array(res_edge * 3)
+            elif len(res_edge) != 3:
+                raise ValueError('res_edge parameter must be either 1 or 3 space-separated numbers')
+            else:
+                res_edge = np.array(res_edge)
+            self.qvox = np.diag(1. / res_edge / (self.size//2))
         else:
-            self.res_edge = np.array(self.res_edge)
+            raise ValueError('Need either res_edge of qvox_fname to define voxel parameters')
+        print('q-space voxel size:\n%s' % self.qvox)
+        self.a2vox = cp.array((self.qvox * self.size).T).astype('f4')
 
         # Get centered coordinates
         univ = md.Universe(pdb_fname)
@@ -93,18 +105,13 @@ class PCDiffuse():
                               np.arange(self.size[1], dtype='f4') - self.size[1]//2,
                               np.arange(self.size[2], dtype='f4') - self.size[2]//2,
                               indexing='ij')
-        self.qrad = cp.array(np.sqrt((x / cen[0] / self.res_edge[0])**2 +
-                                     (y / cen[1] / self.res_edge[1])**2 +
-                                     (z / cen[2] / self.res_edge[2])**2))
-        self.qrad[self.qrad == 0.] = 0.1 / cen.max() / self.res_edge.max()
+        self.qrad = cp.array(np.linalg.norm(np.dot(self.qvox, np.array([x.ravel(), y.ravel(), z.ravel()])), axis=0).reshape(x.shape))
+        # -- 30 A^2 B_sol
+        self.b_sol_filt = cp.fft.ifftshift(cp.exp(-30 * self.qrad**2))
 
         # u-vectors for LLM
-        self.urad = cp.array(np.sqrt((x * self.res_edge[0] / 2)**2 +
-                                     (y * self.res_edge[1] / 2)**2 +
-                                     (z * self.res_edge[2] / 2)**2))
-
-        # 30 A^2 B_sol
-        self.b_sol_filt = np.fft.ifftshift(np.exp(-30 * self.qrad**2))
+        uvox = np.linalg.inv(self.qvox.T) / self.size
+        self.urad = cp.array(np.linalg.norm(np.dot(uvox, np.array([x.ravel(), y.ravel(), z.ravel()])), axis=0).reshape(x.shape))
 
         if self.out_fname is None:
             self.out_fname = op.splitext(pdb_fname)[0] + '_diffcalc.ccp4'
@@ -185,13 +192,13 @@ class PCDiffuse():
         dsize = cp.array(self.size)
 
         # Convert to voxel units
-        curr_pos *= 2. / cp.array(self.res_edge)
-        curr_pos += dsize // 2
+        vox_pos = cp.dot(curr_pos, self.a2vox)
+        vox_pos += dsize // 2
 
         # Generate density grid
-        n_atoms = len(curr_pos)
+        n_atoms = len(vox_pos)
         dens = cp.zeros(tuple(self.size), dtype='f4')
-        self.k_gen_dens((n_atoms//32+1,), (32,), (curr_pos, self.atom_f0, n_atoms, dsize, dens))
+        self.k_gen_dens((n_atoms//32+1,), (32,), (vox_pos, self.atom_f0, n_atoms, dsize, dens))
 
         # Solvent mask filtering
         mask = (dens<0.2).astype('f4')
