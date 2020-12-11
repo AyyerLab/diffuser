@@ -26,9 +26,8 @@ class CovarianceOptimizer():
         self.pcd.num_vecs = self.num_vecs
         self.pcd.cov_weights = cp.identity(self.num_vecs)
         self.pcd.vecs = self.pcd.vecs[:,:self.num_vecs]
+        self.size = self.pcd.size
 
-        self.size = conf.getint('parameters', 'size')
-        self.res_edge_A = conf.getfloat('parameters', 'res_edge')
         self.output_fname = conf.get('optimizer', 'output_fname')
         self.diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
         self.offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
@@ -39,7 +38,8 @@ class CovarianceOptimizer():
         self.rbr_bounds = tuple([float(s) for s in conf.get('optimizer', 'RBR_sigma_deg_bounds', fallback = '0 0').split()])
         self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
         self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
-        rad_range = tuple([float(s) for s in conf.get('optimizer', 'radius_range', fallback = '10 %d'%(self.size//2)).split()])
+        self.lattice_llm = conf.getboolean('optimizer', 'lattice_llm', fallback=False)
+        qrange = tuple([float(s) for s in conf.get('optimizer', 'q_range', fallback = '0.05 1').split()])
         self.point_group = conf.get('optimizer', 'point_group', fallback='1')
 
         if self.point_group not in ['1', '222']:
@@ -47,7 +47,7 @@ class CovarianceOptimizer():
         self.dims = []
         self.get_dims()
 
-        self.intrad, self.voxmask = self.get_radsel(self.size, rad_range[0], rad_range[1])
+        self.intrad, self.voxmask = self.get_qsel(*qrange)
         self.voxmask &= ~np.isnan(self.Itarget)
         self.radcount = None
         if self.do_aniso:
@@ -157,17 +157,23 @@ class CovarianceOptimizer():
             self.pcd.sigma_deg = s[n]
             n += 1
 
-        self.pcd.run_mc()
-        Imc = self.pcd.diff_intens
+        if self.dims_code % 32 != 0:
+            self.pcd.run_mc()
+            Imc = self.pcd.diff_intens
+        else:
+            Imc = self.pcd.get_intens()
         if self.dims_code & 32 != 0:
-            Icalc = self.pcd.liquidize(cp.array(Imc), s[-2], s[-1]).get()
+            if self.lattice_llm:
+                Icalc = self.pcd.liqlatt(s[-2], s[1]) * cp.array(Imc)
+            else:
+                Icalc = self.pcd.liquidize(cp.array(Imc), s[-2], s[-1])
         else:
             Icalc = Imc
 
         if self.point_group == '222':
             Icalc = 0.25 * (Icalc + Icalc[::-1] + Icalc[:,::-1] + Icalc[:,:,::-1])
 
-        return Icalc
+        return Icalc.get()
 
     def obj_fun (self, s):
         '''Calcuates L2-norm between MC diffuse with given 's' and target diffuse'''
@@ -185,12 +191,12 @@ class CovarianceOptimizer():
 
         return float(retval)
 
-    @staticmethod
-    def get_radsel(size, rmin, rmax):
-        ind = np.arange(size).astype('f8') - size//2
-        x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        rad = np.sqrt(x*x + y*y + z*z).astype('i4')
-        return rad, ((rad>=rmin) & (rad<=rmax))
+    def get_qsel(self, qmin, qmax):
+        cen = self.size // 2
+        num_bins = self.pcd
+        binsize = self.pcd.qrad[0,0,0] - self.pcd.qrad[0,0,1]
+        binrad = (self.pcd.qrad / binsize).get().astype('i4')
+        return binrad, ((self.pcd.qrad >= qmin) & (self.pcd.qrad <= qmax)).get()
 
     def get_radavg(self, intens):
         if self.radcount is None:
