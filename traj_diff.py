@@ -73,7 +73,7 @@ class TrajectoryDiffuse():
 
             self._initialize_md(sel_string)
             if self.out_fname is None:
-                self.out_fname = op.splitext(traj_fname)[0] + '_diffcalc.h5'#'_diffcalc.ccp4'
+                self.out_fname = op.splitext(traj_fname)[0] + '_rbt'+str(sigma_vox) +'_diffcalc.h5'#'_diffcalc.ccp4'
         else:
             if topo_fname is not None:
                 raise AttributeError('Cannot specify both pdb and topology/trajectory. Pick one.')
