@@ -70,7 +70,7 @@ class PCDiffuse():
         else:
             raise ValueError('Need either res_edge of qvox_fname to define voxel parameters')
         print('q-space voxel size:\n%s' % self.qvox)
-        self.a2vox = cp.array((self.qvox * self.size).T).astype('f4')
+        self.a2vox = cp.array((self.qvox * self.size)).astype('f4')
 
         # Get centered coordinates
         univ = md.Universe(pdb_fname)
