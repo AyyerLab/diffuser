@@ -31,10 +31,12 @@ class PCDiffuse():
         sel_string = config.get('files', 'selection_string', fallback='all')
         vecs_fname = config.get('files', 'vecs_fname')
         self.out_fname = config.get('files', 'out_fname', fallback=None)
+        qvox_fname = config.get('files', 'qvox_fname', fallback=None)
+        rlatt_fname = config.get('files', 'rlatt_fname', fallback=None)
 
         # Parameters
         self.size = [int(s) for s in config.get('parameters', 'size').split()]
-        self.res_edge = [float(r) for r in config.get('parameters', 'res_edge').split()]
+        res_edge = [float(r) for r in config.get('parameters', 'res_edge', fallback='0.').split()]
         self.sigma_deg = config.getfloat('parameters', 'sigma_deg', fallback=0.)
         sigma_vox = config.getfloat('parameters', 'sigma_vox', fallback=0.)
         self.sigma_uncorr_A = config.getfloat('parameters', 'sigma_uncorr_A', fallback=0.)
@@ -51,13 +53,24 @@ class PCDiffuse():
         else:
             self.size = np.array(self.size)
 
-        # Get res_edge
-        if len(self.res_edge) == 1:
-            self.res_edge = np.array(self.res_edge * 3)
-        elif len(self.res_edge) != 3:
-            raise ValueError('res_edge parameter must be either 1 or 3 space-separated numbers')
+        # Get voxel size in 3D
+        if qvox_fname is not None and res_edge != [0.]:
+            raise ValueError('Both res_edge and qvox_fname defined. Pick one.')
+        elif qvox_fname is not None:
+            with h5py.File(qvox_fname, 'r') as f:
+                self.qvox = f['q_voxel_size'][:]
+        elif res_edge != [0.]:
+            if len(res_edge) == 1 and res_edge[0] != 0.:
+                res_edge = np.array(res_edge * 3)
+            elif len(res_edge) != 3:
+                raise ValueError('res_edge parameter must be either 1 or 3 space-separated numbers')
+            else:
+                res_edge = np.array(res_edge)
+            self.qvox = np.diag(1. / res_edge / (self.size//2))
         else:
-            self.res_edge = np.array(self.res_edge)
+            raise ValueError('Need either res_edge of qvox_fname to define voxel parameters')
+        print('q-space voxel size:\n%s' % self.qvox)
+        self.a2vox = cp.array((self.qvox * self.size).T).astype('f4')
 
         # Get centered coordinates
         univ = md.Universe(pdb_fname)
@@ -87,24 +100,30 @@ class PCDiffuse():
             '''
             print('Using %d pricipal-component vectors on %d atoms' % (self.vecs.shape[1], self.vecs.shape[0]//3))
 
+        # Get reciprocal lattice if defined
+        if rlatt_fname is None:
+            self.rlatt = None
+            self.lpatt = None
+        else:
+            with h5py.File(rlatt_fname, 'r') as f:
+                self.rlatt = cp.array(f['diff_intens'][:])
+            self.lpatt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(self.rlatt)))
+
         # B_sol filter for support mask
         cen = self.size // 2
         x, y, z = np.meshgrid(np.arange(self.size[0], dtype='f4') - self.size[0]//2,
                               np.arange(self.size[1], dtype='f4') - self.size[1]//2,
                               np.arange(self.size[2], dtype='f4') - self.size[2]//2,
                               indexing='ij')
-        self.qrad = cp.array(np.sqrt((x / cen[0] / self.res_edge[0])**2 +
-                                     (y / cen[1] / self.res_edge[1])**2 +
-                                     (z / cen[2] / self.res_edge[2])**2))
-        self.qrad[self.qrad == 0.] = 0.1 / cen.max() / self.res_edge.max()
+        self.qrad = cp.array(np.linalg.norm(np.dot(self.qvox, np.array([x.ravel(), y.ravel(), z.ravel()])), axis=0).reshape(x.shape))
+        # -- 30 A^2 B_sol
+        self.b_sol_filt = cp.fft.ifftshift(cp.exp(-30 * self.qrad**2))
+        # -- Maximum res_edge
+        self.res_max = float(1. / max(self.qrad[0, cen[1], cen[2]], self.qrad[cen[0], 0, cen[2]], self.qrad[cen[0], cen[1], 0]))
 
         # u-vectors for LLM
-        self.urad = cp.array(np.sqrt((x * self.res_edge[0] / 2)**2 +
-                                     (y * self.res_edge[1] / 2)**2 +
-                                     (z * self.res_edge[2] / 2)**2))
-
-        # 30 A^2 B_sol
-        self.b_sol_filt = np.fft.ifftshift(np.exp(-30 * self.qrad**2))
+        uvox = np.linalg.inv(self.qvox.T) / self.size
+        self.urad = cp.array(np.linalg.norm(np.dot(uvox, np.array([x.ravel(), y.ravel(), z.ravel()])), axis=0).reshape(x.shape))
 
         if self.out_fname is None:
             self.out_fname = op.splitext(pdb_fname)[0] + '_diffcalc.ccp4'
@@ -180,18 +199,23 @@ class PCDiffuse():
 
         return self._calc_dens_pos(curr_pos)
 
+    def get_intens(self):
+        dens = self._calc_dens_pos(self.avg_pos)
+        fdens = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(dens)))
+        return cp.abs(fdens)**2
+
     def _calc_dens_pos(self, curr_pos):
         '''Calculate density from coordinates in Angstrom units'''
         dsize = cp.array(self.size)
 
         # Convert to voxel units
-        curr_pos *= 2. / cp.array(self.res_edge)
-        curr_pos += dsize // 2
+        vox_pos = cp.dot(curr_pos, self.a2vox)
+        vox_pos += dsize // 2
 
         # Generate density grid
-        n_atoms = len(curr_pos)
+        n_atoms = len(vox_pos)
         dens = cp.zeros(tuple(self.size), dtype='f4')
-        self.k_gen_dens((n_atoms//32+1,), (32,), (curr_pos, self.atom_f0, n_atoms, dsize, dens))
+        self.k_gen_dens((n_atoms//32+1,), (32,), (vox_pos, self.atom_f0, n_atoms, dsize, dens))
 
         # Solvent mask filtering
         mask = (dens<0.2).astype('f4')
@@ -222,7 +246,7 @@ class PCDiffuse():
         self.mean_intens /= self.denominator
 
         self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
-        self.diff_intens = self.diff_intens.get()
+        #self.diff_intens = self.diff_intens.get()
 
     def run_linear(self, mode, sigma):
         params = cp.linspace(-4*sigma, 4*sigma, self.num_steps, dtype='f4')
@@ -251,8 +275,8 @@ class PCDiffuse():
         patt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(intens)))
 
         slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j) for n in range(1,150)])
-        if slimits.max() > 2. * np.pi * sigma_A / self.res_edge.max():
-            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_edge.max())[0][0] + 1
+        if slimits.max() > 2. * np.pi * sigma_A / self.res_max:
+            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_max)[0][0] + 1
         else:
             print('No effect of liquid-like motions with these parameters')
             return intens
@@ -267,14 +291,34 @@ class PCDiffuse():
 
         return liq
 
+    def liqlatt(self, sigma_A, gamma_A):
+        if self.rlatt is None:
+            raise AttributeError('Provide rlatt to apply liqlatt')
+        s_sq = (2 * cp.pi * sigma_A * self.qrad)**2
+        slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j)
+                            for n in range(1, 150)])
+        if slimits.max() > 2 * np.pi * sigma_A / self.res_max:
+            n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_max)[0][0] + 1
+        else:
+            return self.rlatt
+
+        if n_max == 0:
+            return cp.ones_like(self.rlatt)
+
+        liq = cp.zeros_like(self.rlatt)
+        for n in range(1, n_max):
+            weight = cp.exp(-s_sq + n * cp.log(s_sq) - float(special.loggamma(n+1)))
+            kernel = cp.exp(-n * self.urad / gamma_A)
+            liq += weight * cp.abs(cp.fft.fftshift(cp.fft.ifftn(self.lpatt * kernel)))
+            sys.stderr.write('\rLiquidizing: %d/%d' % (n, n_max-1))
+        sys.stderr.write('\n')
+
+        return liq
+
     def save(self, out_fname):
         print('Writing intensities to', out_fname)
         with mrcfile.new(out_fname, overwrite=True) as f:
             f.set_data(self.diff_intens.astype('f4'))
-            for key in f.header.cella.dtype.names:
-                f.header.cella[key] = (self.size[0] // 2) * self.res_edge
-                f.header.cellb[key] = (self.size[1] // 2) * self.res_edge
-                f.header.cellc[key] = (self.size[2] // 2) * self.res_edge
 
 def main():
     import argparse
