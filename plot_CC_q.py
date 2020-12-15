@@ -57,11 +57,10 @@ def main():
         
         #cal cc
         assert Vol1.shape == Vol2.shape
-        size = Vol1.shape[-1]
-        bin_size = 1
-        rad, rbin = calc_cc.calc_rad(size, bin_size)
-        num_bins = int(rbin.max() +1)
         mask = ~(np.isnan(Vol1) | np.isnan(Vol2))
+        rbin = cp.array(opt.intrad)
+        num_bins = int(rbin.max() + 1)
+        qbin_size = float(opt.pcd.qrad[0,0,0] - opt.pcd.qrad[0,0,1])
          
         calc_cc.subtract_radavg(Vol1, rbin, num_bins, mask)
         calc_cc.subtract_radavg(Vol2, rbin, num_bins, mask) 
@@ -70,12 +69,8 @@ def main():
         cc = cc.get()    
         
         # cal q
-        res_edge = opt.res_edge_A
-        cen = size //2
-        q = np.arange(num_bins) * bin_size / cen / res_edge
+        q = np.arange(num_bins) * qbin_size
         return(cc, q)
-
-
 
     if args.get_mc_intens: 
         #calculate Imc and CC between Itarget
