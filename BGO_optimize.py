@@ -29,6 +29,7 @@ class CovarianceOptimizer():
         self.size = self.pcd.size
 
         self.output_fname = conf.get('optimizer', 'output_fname')
+        intern_fname = conf.get('optimizer', 'intern_intens_fname', fallback=None)
         self.diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
         self.offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
         self.llm_sigma_bounds = tuple([float(s) for s in conf.get('optimizer', 'LLM_sigma_A_bounds', fallback = '0 0').split()])
@@ -46,6 +47,12 @@ class CovarianceOptimizer():
             raise ValueError('%s point group not implemented' % self.point_group)
         self.dims = []
         self.get_dims()
+
+        if intern_fname is not None:
+            with h5py.File(intern_fname, 'r') as f:
+                self.Iintern = cp.array(f['diff_intens'][:])
+        else:
+            self.Iintern = None
 
         self.intrad, self.voxmask = self.get_qsel(*qrange)
         self.voxmask &= ~np.isnan(self.Itarget)
@@ -135,6 +142,7 @@ class CovarianceOptimizer():
         self.pcd.cov_weights = self.pcd.cov_weights * sigmas_diag**2
         '''
 
+        # Set up MC parameters
         self.pcd.cov_weights[:] = 0.
         n = 0
         for i in range(self.num_vecs):
@@ -157,16 +165,21 @@ class CovarianceOptimizer():
             self.pcd.sigma_deg = s[n]
             n += 1
 
+        # Calculate MC intensity if needed
         if self.dims_code % 32 != 0:
             self.pcd.run_mc()
             Imc = self.pcd.diff_intens
+        elif self.Iintern is not None:
+            Imc = self.Iintern
         else:
             Imc = self.pcd.get_intens()
+
+        # Apply LLM transforms
         if self.dims_code & 32 != 0:
             if self.lattice_llm:
-                Icalc = self.pcd.liqlatt(s[-2], s[1]) * cp.array(Imc)
+                Icalc = self.pcd.liqlatt(s[-2], s[1]) * Imc
             else:
-                Icalc = self.pcd.liquidize(cp.array(Imc), s[-2], s[-1])
+                Icalc = self.pcd.liquidize(Imc, s[-2], s[-1])
         else:
             Icalc = Imc
 
@@ -191,7 +204,7 @@ class CovarianceOptimizer():
 
         return float(retval)
 
-    def get_qsel(self, qmin, qmax):
+    def get_qsel(self, qmin, qmax, binsize=None):
         cen = self.size // 2
         binsize = self.pcd.qrad[0,0,0] - self.pcd.qrad[0,0,1]
         binrad = (self.pcd.qrad / binsize).get().astype('i4')
