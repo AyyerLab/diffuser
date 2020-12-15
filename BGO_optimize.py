@@ -193,7 +193,6 @@ class CovarianceOptimizer():
 
     def get_qsel(self, qmin, qmax):
         cen = self.size // 2
-        num_bins = self.pcd
         binsize = self.pcd.qrad[0,0,0] - self.pcd.qrad[0,0,1]
         binrad = (self.pcd.qrad / binsize).get().astype('i4')
         return binrad, ((self.pcd.qrad >= qmin) & (self.pcd.qrad <= qmax)).get()
