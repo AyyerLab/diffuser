@@ -7,7 +7,7 @@ import h5py
 import cupy as cp
 import MDAnalysis as md
 
-from .rbdiff import RBDiffuse
+from diffuser import RBDiffuse
 
 class TrajectoryDiffuse():
     '''Generate diffuse intensities from MD trajectory and rigid-body parameters'''
