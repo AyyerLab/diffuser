@@ -53,4 +53,31 @@ def get_cov(res):
                 cov[j,i] = res.x[n]
             n += 1
     return cov
-    
+
+def plot_cc(cc):
+    P.clf()
+    titles = 'xx yy zz xy yz zx'.split()
+    for i in range(6):
+        s = P.subplot(2,3,i+1)
+        im = P.imshow(cc[i], vmin=-1, vmax=1, cmap='coolwarm')
+        P.title(r'CC$_{%s}$'%titles[i], fontsize=12)
+    P.suptitle('CC matrices', fontsize=14)
+    P.subplots_adjust(right=0.88)
+    cax = P.gcf().add_axes([0.9,0.125,0.02,0.75])
+    P.colorbar(im, cax=cax)
+
+def plot_ccpos(cc, mean_pos, ind):
+    P.clf()
+    titles = 'xx yy zz xy yz zx'.split()
+    for i in range(6):
+        s = P.subplot(2,3,i+1)
+        im = P.scatter(mean_pos[:,0], mean_pos[:,1], 3, c=cc[i,ind], cmap='coolwarm', vmin=-1, vmax=1)
+        P.plot(mean_pos[ind,0], mean_pos[ind,1], marker='o', markersize=14, color='green', markerfacecolor='none')
+        if i > 2:
+            P.xlabel(r'X ($\AA$)')
+        if i % 3 == 0:
+            P.ylabel(r'Y ($\AA$)')
+        P.title(r'CC_${%s}$'%titles[i])
+    P.subplots_adjust(right=0.88)
+    cax = P.gcf().add_axes([0.9,0.125,0.02,0.75])
+    P.colorbar(im, cax=cax)
