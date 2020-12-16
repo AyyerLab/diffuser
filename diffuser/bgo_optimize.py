@@ -213,7 +213,7 @@ class CovarianceOptimizer():
         np.add.at(radavg, self.intrad[self.voxmask], intens[self.voxmask])
         return radavg / self.radcount
 
-if __name__ == '__main__':
+def main():
     '''Run as console script with given config file and number of iterations'''
     import argparse
 
@@ -229,3 +229,6 @@ if __name__ == '__main__':
 
     opt = CovarianceOptimizer(args.config_file)
     opt.optimize(args.num_iter, resume=args.resume, n_initial_points=args.initial_points)
+
+if __name__ == '__main__':
+    main()
