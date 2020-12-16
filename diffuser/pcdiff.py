@@ -3,23 +3,26 @@
 import sys
 import os.path as op
 import configparser
+import argparse
 import numpy as np
-from scipy import special
-import h5py
 import cupy as cp
-from cupyx.scipy import ndimage
-cp.disable_experimental_feature_warning = True
+import h5py
+from scipy import special
 import MDAnalysis as md
 import mrcfile
 
 class PCDiffuse():
+    '''Calculate diffuse scattering from random distortions
+    along principal component (PC) vectors
+    '''
     def __init__(self, config_fname):
         self._parse_config(config_fname)
         self._define_kernels()
+        self.diff_intens = None
 
     def _define_kernels(self):
-        with open('kernels.cu', 'r') as f:
-            kernels = cp.RawModule(code=f.read())
+        with open('kernels.cu', 'r') as fptr:
+            kernels = cp.RawModule(code=fptr.read())
         self.k_gen_dens = kernels.get_function('gen_dens')
 
     def _parse_config(self, config_file):
@@ -39,7 +42,7 @@ class PCDiffuse():
         res_edge = [float(r) for r in config.get('parameters', 'res_edge', fallback='0.').split()]
         self.sigma_deg = config.getfloat('parameters', 'sigma_deg', fallback=0.)
         sigma_vox = config.getfloat('parameters', 'sigma_vox', fallback=0.)
-        self.sigma_uncorr_A = config.getfloat('parameters', 'sigma_uncorr_A', fallback=0.)
+        self.sigma_uncorr = config.getfloat('parameters', 'sigma_uncorr_A', fallback=0.)
         self.cov_vox = np.identity(3) * sigma_vox**2
         self.num_steps = config.getint('parameters', 'num_steps')
 
@@ -56,9 +59,9 @@ class PCDiffuse():
         # Get voxel size in 3D
         if qvox_fname is not None and res_edge != [0.]:
             raise ValueError('Both res_edge and qvox_fname defined. Pick one.')
-        elif qvox_fname is not None:
-            with h5py.File(qvox_fname, 'r') as f:
-                self.qvox = f['q_voxel_size'][:]
+        if qvox_fname is not None:
+            with h5py.File(qvox_fname, 'r') as fptr:
+                self.qvox = fptr['q_voxel_size'][:]
         elif res_edge != [0.]:
             if len(res_edge) == 1 and res_edge[0] != 0.:
                 res_edge = np.array(res_edge * 3)
@@ -83,30 +86,25 @@ class PCDiffuse():
         self.atom_f0[self.atom_f0 == 0.5] = 1. # Hydrogens
 
         # Get PC vectors
-        with h5py.File(vecs_fname, 'r') as f:
-            self.vecs = cp.array(f['vecs'][:].astype('f4'))
-            #self.vec_weights = cp.array(f['weights'][:])
-            self.cov_weights = cp.array(f['cov_weights'][:])
-            # Check number of components = 3N
-            assert self.vecs.shape[0] == self.avg_pos.size
-            # Check number of vectors matches number of weights
-            assert self.vecs.shape[1] == self.cov_weights.shape[0]
-            self.num_vecs = self.cov_weights.shape[0]
-            '''
-            self.vec_weights = cp.array(f['weights'][:])
-            # Check number of vectors matches number of weights
-            assert self.vecs.shape[1] == self.vec_weights.shape[0]
-            self.num_vecs = self.vec_weights.shape[0]
-            '''
-            print('Using %d pricipal-component vectors on %d atoms' % (self.vecs.shape[1], self.vecs.shape[0]//3))
+        with h5py.File(vecs_fname, 'r') as fptr:
+            self.vecs = cp.array(fptr['vecs'][:].astype('f4'))
+            #self.vec_weights = cp.array(fptr['weights'][:])
+            self.cov_weights = cp.array(fptr['cov_weights'][:])
+
+        # Check number of components = 3N
+        assert self.vecs.shape[0] == self.avg_pos.size
+        # Check number of vectors matches number of weights
+        assert self.vecs.shape[1] == self.cov_weights.shape[0]
+        self.num_vecs = self.cov_weights.shape[0]
+        print('Using %d pricipal-component vectors on %d atoms' % (self.vecs.shape[1], self.vecs.shape[0]//3))
 
         # Get reciprocal lattice if defined
         if rlatt_fname is None:
             self.rlatt = None
             self.lpatt = None
         else:
-            with h5py.File(rlatt_fname, 'r') as f:
-                self.rlatt = cp.array(f['diff_intens'][:])
+            with h5py.File(rlatt_fname, 'r') as fptr:
+                self.rlatt = cp.array(fptr['diff_intens'][:])
             self.lpatt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(self.rlatt)))
 
         # B_sol filter for support mask
@@ -129,20 +127,23 @@ class PCDiffuse():
             self.out_fname = op.splitext(pdb_fname)[0] + '_diffcalc.ccp4'
         print('Parsed data')
 
-    def _gen_rotz(self, angle):
+    @staticmethod
+    def _gen_rotz(angle):
         c = np.cos(angle)
         s = np.sin(angle)
         arr = np.array([[c, -s, 0.], [s, c, 0.], [0., 0., 1.]])
         return cp.array(arr).astype('f4')
 
-    def _random_rot(self):
-        qq = 2.
+    @staticmethod
+    def _random_rot():
+        qnorm = 2.
         while True:
             quat = np.random.normal(0, 0.1, 4)
-            qq = np.linalg.norm(quat)
-            if qq < 1:
-                quat /= qq
+            qnorm = np.linalg.norm(quat)
+            if qnorm < 1:
+                quat /= qnorm
                 break
+        q = quat
         rotmatrix = np.array([
             [1 - 2*q[2]**2 - 2*q[3]**2, 2*q[1]*q[2] - 2*q[3]*q[0], 2*q[1]*q[3] + 2*q[2]*q[0]],
             [2*q[1]*q[2] + 2*q[3]*q[0], 1 - 2*q[1]**2 - 2*q[3]**2, 2*q[2]*q[3] - 2*q[1]*q[0]],
@@ -153,12 +154,12 @@ class PCDiffuse():
     def _random_small_rot(sigma_deg):
         angle = np.random.normal(0, sigma_deg*np.pi/180)
         while True:
-            v = np.random.random(3)
-            norm = np.linalg.norm(v)
+            vec = np.random.random(3)
+            norm = np.linalg.norm(vec)
             if norm < 1:
-                v /= norm
+                vec /= norm
                 break
-        tilde = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        tilde = np.array([[0, -vec[2], vec[1]], [vec[2], 0, -vec[0]], [-vec[1], vec[0], 0]])
         rotmatrix = np.cos(angle)*np.identity(3) + np.sin(angle)*tilde + (1. - np.cos(angle))*(np.dot(tilde, tilde) + np.identity(3))
 
         return cp.array(rotmatrix.astype('f4'))
@@ -173,7 +174,7 @@ class PCDiffuse():
         if np.linalg.norm(self.cov_weights.get()) > 0.:
             #projs = cp.random.normal(cp.zeros(self.num_vecs), self.vec_weights, size=self.num_vecs, dtype='f4')
             projs = cp.array(np.random.multivariate_normal(np.zeros(self.num_vecs), self.cov_weights.get())).astype('f4')
-            curr_pos = self.avg_pos + cp.dot(self.vecs, projs).reshape(3,-1).T
+            curr_pos = self.avg_pos + cp.dot(self.vecs, projs).reshape(3, -1).T
         else:
             curr_pos = cp.copy(self.avg_pos)
 
@@ -183,8 +184,8 @@ class PCDiffuse():
         curr_pos = cp.dot(curr_pos, self._random_small_rot(self.sigma_deg))
 
         # Apply uncorrelated displacements
-        if self.sigma_uncorr_A > 0.:
-            curr_pos += cp.random.randn(*curr_pos.shape) * self.sigma_uncorr_A
+        if self.sigma_uncorr > 0.:
+            curr_pos += cp.random.randn(*curr_pos.shape) * self.sigma_uncorr
 
         return self._calc_dens_pos(curr_pos)
 
@@ -193,13 +194,18 @@ class PCDiffuse():
 
         Applies distortion along specific principal component vector
         No rigid body translations and rotations
+
+        Arguments:
+            mode - Mode number
+            sigma - Standard deviation of mode weight
         '''
         # Generate distorted molecule
-        curr_pos = self.avg_pos + self.vecs[:,mode].reshape(3,-1).T * weight
+        curr_pos = self.avg_pos + self.vecs[:,mode].reshape(3, -1).T * weight
 
         return self._calc_dens_pos(curr_pos)
 
     def get_intens(self):
+        '''Generate intensity from average structure'''
         dens = self._calc_dens_pos(self.avg_pos)
         fdens = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(dens)))
         return cp.abs(fdens)**2
@@ -224,57 +230,67 @@ class PCDiffuse():
 
         return dens
 
-    def _initialize(self):
-        self.mean_fdens = cp.zeros(tuple(self.size), dtype='c8')
-        self.mean_intens = cp.zeros(tuple(self.size), dtype='f4')
-        self.denominator = 0.
+    def _init_diffcalc(self):
+        mean_fdens = cp.zeros(tuple(self.size), dtype='c8')
+        mean_intens = cp.zeros(tuple(self.size), dtype='f4')
+        return mean_fdens, mean_intens, 0.
 
     def run_mc(self):
-        self._initialize()
+        '''Run Monte Carlo calculation of diffuse intensities from
+        random distortions along PC modes
+        '''
+        mean_fdens, mean_intens, denr = self._init_diffcalc()
         for i in range(self.num_steps):
             dens = self.gen_random_dens()
             fdens = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(dens)))
 
-            self.mean_fdens += fdens
-            self.mean_intens += cp.abs(fdens)**2
-            self.denominator += 1
+            mean_fdens += fdens
+            mean_intens += cp.abs(fdens)**2
+            denr += 1
 
             sys.stderr.write('\r%d/%d      ' % (i+1, self.num_steps))
         sys.stderr.write('\n')
 
-        self.mean_fdens /= self.denominator
-        self.mean_intens /= self.denominator
+        mean_fdens /= denr
+        mean_intens /= denr
 
-        self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
-        #self.diff_intens = self.diff_intens.get()
+        self.diff_intens = mean_intens - cp.abs(mean_fdens)**2
 
     def run_linear(self, mode, sigma):
+        '''Calculate diffuse intensity from Gaussian distortions about
+        selected PC mode
+
+        Arguments:
+            mode - Mode number
+            sigma - Standard deviation of mode weight
+        '''
         params = cp.linspace(-4*sigma, 4*sigma, self.num_steps, dtype='f4')
         norm_weights = cp.exp(-params**2/2./sigma**2)
 
-        self._initialize()
+        mean_fdens, mean_intens, denr = self._init_diffcalc()
         for i in range(self.num_steps):
             dens = self.gen_proj_dens(mode, params[i])
             fdens = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(dens)))
 
-            self.mean_fdens += fdens * norm_weights[i]
-            self.mean_intens += np.abs(fdens)**2 * norm_weights[i]
-            self.denominator += norm_weights[i]
+            mean_fdens += fdens * norm_weights[i]
+            mean_intens += np.abs(fdens)**2 * norm_weights[i]
+            denr += norm_weights[i]
 
             sys.stderr.write('\r%d/%d      ' % (i+1, self.num_steps))
         sys.stderr.write('\n')
 
-        self.mean_fdens /= self.denominator
-        self.mean_intens /= self.denominator
+        mean_fdens /= denr
+        mean_intens /= denr
 
-        self.diff_intens = self.mean_intens - cp.abs(self.mean_fdens)**2
-        self.diff_intens = self.diff_intens.get()
+        self.diff_intens = mean_intens - cp.abs(mean_fdens)**2
 
     def liquidize(self, intens, sigma_A, gamma_A):
+        '''Apply liquidization transform on given intensity'''
         s_sq = (2. * cp.pi * sigma_A * self.qrad)**2
         patt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(intens)))
 
-        slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j) for n in range(1,150)])
+        slimits = np.array([np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n, k=0)) * np.sqrt(n) * -1j)
+                            for n in range(1, 150)])
         if slimits.max() > 2. * np.pi * sigma_A / self.res_max:
             n_max = np.where(slimits > 2. * np.pi * sigma_A / self.res_max)[0][0] + 1
         else:
@@ -292,6 +308,7 @@ class PCDiffuse():
         return liq
 
     def liqlatt(self, sigma_A, gamma_A):
+        '''Apply liquidization transform of reciprocal lattice'''
         if self.rlatt is None:
             raise AttributeError('Provide rlatt to apply liqlatt')
         s_sq = (2 * cp.pi * sigma_A * self.qrad)**2
@@ -316,13 +333,15 @@ class PCDiffuse():
         return liq
 
     def save(self, out_fname):
+        '''Save diffuse intensities to file'''
+        if self.diff_intens is None:
+            raise ValueError('Calculate diffuse intensities first')
+
         print('Writing intensities to', out_fname)
-        with mrcfile.new(out_fname, overwrite=True) as f:
-            f.set_data(self.diff_intens.astype('f4'))
+        with mrcfile.new(out_fname, overwrite=True) as fptr:
+            fptr.set_data(self.diff_intens.astype('f4'))
 
 def main():
-    import argparse
-
     parser = argparse.ArgumentParser(description='Diffuse from PC-distorted molecules')
     parser.add_argument('config_file', help='Path to config file')
     parser.add_argument('-d', '--device', help='GPU device number. Default: 0', type=int, default=0)
