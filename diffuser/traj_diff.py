@@ -1,35 +1,24 @@
-import os
 import sys
 import os.path as op
 import configparser
-import numpy
-try:
-    import cupy as np
-    from cupyx.scipy import ndimage
-    CUPY = True
-    print('Using CuPy')
-    np.disable_experimental_feature_warning = True
-except ImportError:
-    import numpy as np
-    from scipy import ndimage
-    CUPY = False
-    print('Using NumPy/SciPy')
+import argparse
+import numpy as np
 import h5py
+import cupy as cp
 import MDAnalysis as md
 
-import rbdiff
+from .rbdiff import RBDiffuse
 
 class TrajectoryDiffuse():
-    '''Generate diffuse intensities from set of coordinates and rigid-body parameters'''
+    '''Generate diffuse intensities from MD trajectory and rigid-body parameters'''
     def __init__(self, config_file):
         self._parse_config(config_file)
-        self.rbd = rbdiff.RBDiffuse(self.rot_plane)
-        if CUPY:
-            self._define_kernels()
+        self.rbd = RBDiffuse(self.rot_plane)
+        self._define_kernels()
 
     def _define_kernels(self):
-        with open('kernels.cu', 'r') as f:
-            kernels = cp.RawModule(code=f.read())
+        with open('kernels.cu', 'r') as fptr:
+            kernels = cp.RawModule(code=fptr.read())
         self.k_gen_dens = kernels.get_function('gen_dens')
 
     def _parse_config(self, config_file):
@@ -52,8 +41,8 @@ class TrajectoryDiffuse():
         rot_axis = config.getint('parameters', 'rot_axis', fallback=0)
         self.num_steps = config.getint('parameters', 'num_steps')
 
-        self.cov_vox = numpy.identity(3) * sigma_vox**2
-        self.rot_plane = tuple(numpy.delete([0,1,2], rot_axis))
+        self.cov_vox = np.identity(3) * sigma_vox**2
+        self.rot_plane = tuple(np.delete([0,1,2], rot_axis))
         print('Parsed config file')
 
         if pdb_fname is None:
@@ -62,11 +51,11 @@ class TrajectoryDiffuse():
 
             if traj_fname is not None and traj_flist is not None:
                 raise AttributeError('Cannot specify both traj_fname and traj_flist. Pick one.')
-            elif traj_fname is not None:
+            if traj_fname is not None:
                 self.univ = md.Universe(topo_fname, traj_fname)
             elif traj_flist is not None:
-                with open(traj_flist, 'r') as f:
-                    flist = [l.strip() for l in f.readlines()]
+                with open(traj_flist, 'r') as fptr:
+                    flist = [l.strip() for l in fptr.readlines()]
                 self.univ = md.Universe(topo_fname, flist)
             else:
                 raise AttributeError('Need one of traj_fname or traj_flist with topology file')
@@ -85,82 +74,40 @@ class TrajectoryDiffuse():
 
     def _initialize_md(self, sel_string):
         self.atoms = self.univ.select_atoms(sel_string)
-        #self.elem = np.array([a.name[0] for a in self.atoms])
-        #atom_types = np.unique(self.elem)
+        #self.elem = cp.array([a.name[0] for a in self.atoms])
+        #atom_types = cp.unique(self.elem)
 
         # This hack works for low-Z atoms (mass = 2Z)
-        self.atom_f0 = (np.array([numpy.around(a.mass) for a in self.atoms]) / 2.).astype('f4')
+        self.atom_f0 = (cp.array([np.around(a.mass) for a in self.atoms]) / 2.).astype('f4')
         self.atom_f0[self.atom_f0 == 0.5] = 1. # Hydrogens
 
         # B_sol filter for support mask
         cen = self.size//2
-        ind = np.linspace(-cen, cen, self.size)
-        x, y, z = np.meshgrid(ind, ind, ind, indexing='ij')
-        q = np.sqrt(x*x + y*y + z*z) / cen / self.res_edge
+        ind = cp.linspace(-cen, cen, self.size)
+        x, y, z = cp.meshgrid(ind, ind, ind, indexing='ij')
+        q = cp.sqrt(x*x + y*y + z*z) / cen / self.res_edge
         # 30 A^2 B_sol
-        self.b_sol_filt = np.fft.ifftshift(np.exp(-30 * q * q))
+        self.b_sol_filt = cp.fft.ifftshift(cp.exp(-30 * q * q))
 
     def gen_dens(self, ind):
-        dens = np.zeros(3*(self.size,), dtype='f4')
+        dens = cp.zeros(3*(self.size,), dtype='f4')
 
         # Get positions of atoms in this frame in centered voxels
-        self.univ.trajectory[ind]
-        pos = np.array(self.atoms.positions)
-        pos -= np.array(self.atoms.center_of_mass().astype('f4'))
+        _ = self.univ.trajectory[ind]
+        pos = cp.array(self.atoms.positions)
+        pos -= cp.array(self.atoms.center_of_mass().astype('f4'))
         pos *= 2. / self.res_edge
         pos += self.size // 2
 
         # Interpolate into 3D array
-        if CUPY:
-            self.k_gen_dens((self.atoms.n_atoms//32+1,), (32,),
-                (pos, self.atom_f0, self.atoms.n_atoms, self.size, dens))
-        else:
-            ipos = pos.astype('i4')
-            fpos = pos - ipos
-            cpos = 1 - fpos
-
-            curr_pos = ipos
-            numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*cpos[:,1]*cpos[:,2]*self.atom_f0)
-            curr_pos = ipos + numpy.array([0,0,1])
-            numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*cpos[:,1]*fpos[:,2]*self.atom_f0)
-            curr_pos = ipos + numpy.array([0,1,0])
-            numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*fpos[:,1]*cpos[:,2]*self.atom_f0)
-            curr_pos = ipos + numpy.array([0,1,1])
-            numpy.add.at(dens, tuple(curr_pos.T), cpos[:,0]*fpos[:,1]*fpos[:,2]*self.atom_f0)
-            curr_pos = ipos + numpy.array([1,0,0])
-            numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*cpos[:,1]*cpos[:,2]*self.atom_f0)
-            curr_pos = ipos + numpy.array([1,0,1])
-            numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*cpos[:,1]*fpos[:,2]*self.atom_f0)
-            curr_pos = ipos + numpy.array([1,1,0])
-            numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*fpos[:,1]*cpos[:,2]*self.atom_f0)
-            curr_pos = ipos + numpy.array([1,1,1])
-            numpy.add.at(dens, tuple(curr_pos.T), fpos[:,0]*fpos[:,1]*fpos[:,2]*self.atom_f0)
+        self.k_gen_dens((self.atoms.n_atoms//32+1,), (32,),
+            (pos, self.atom_f0, self.atoms.n_atoms, self.size, dens))
 
         # Solvent mask filtering
         mask = (dens<0.2).astype('f4')
-        mask = np.real(np.fft.ifftn(np.fft.fftn(mask)*self.b_sol_filt)) - 1
+        mask = cp.real(cp.fft.ifftn(cp.fft.fftn(mask)*self.b_sol_filt)) - 1
         dens += mask
 
-        '''
-        # Set up Gaussian windowing
-        sigma = np.sqrt(30 / 4 / np.pi**2) / 1.5 # sigma for 30 A^2 B-factor TODO: Generalize
-        winr = int(np.ceil(3*sigma)) # Window radius
-        window = np.indices(3*(2*winr+1,), dtype='f4')
-        window[0] -= winr
-        window[1] -= winr
-        window[2] -= winr
-
-        # Place Gaussian for each atom
-        for i, p in enumerate(pos):
-            sx = window[0] + fpos[i,0]
-            sy = window[1] + fpos[i,1]
-            sz = window[2] + fpos[i,2]
-            dens[ipos[i,0]-winr:ipos[i,0]+winr+1,
-                 ipos[i,1]-winr:ipos[i,1]+winr+1,
-                 ipos[i,2]-winr:ipos[i,2]+winr+1] += self.atom_f0[i] * np.exp(-(sx**2 + sy**2 + sz**2) / sigma**2 / 2.)
-            sys.stderr.write('\rAtom %.6d'%i)
-        sys.stderr.write('\n')
-        '''
         return dens
 
     def run(self, num_frames=-1, first_frame=0, frame_stride=1, init=True):
@@ -170,8 +117,8 @@ class TrajectoryDiffuse():
         print('Calculating diffuse intensities from %d frames' % num_frames)
 
         for i in range(first_frame, num_frames + first_frame, frame_stride):
-            self.rbd.dens = np.copy(self.gen_dens(i))
-            self.rbd.fdens = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(self.rbd.dens)))
+            self.rbd.dens = cp.copy(self.gen_dens(i))
+            self.rbd.fdens = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(self.rbd.dens)))
 
             if init:
                 do_translate = (self.cov_vox.sum() != 0.)
@@ -194,55 +141,48 @@ class TrajectoryDiffuse():
         num_atoms = self.atoms.n_atoms
         print('Position of %d C-alpha atoms will be used' % num_atoms)
 
-        corr = np.zeros((6, num_atoms, num_atoms))
-        mean_pos = np.zeros((num_atoms, 3))
+        corr = cp.zeros((6, num_atoms, num_atoms))
+        mean_pos = cp.zeros((num_atoms, 3))
 
         print('Calculating mean position over selected frames')
         for i in range(first_frame, num_frames + first_frame, frame_stride):
-            self.univ.trajectory[i]
-            mean_pos += np.array(self.atoms.positions)
+            _ = self.univ.trajectory[i]
+            mean_pos += cp.array(self.atoms.positions)
             sys.stderr.write('\rFrame %d'%i)
         sys.stderr.write('\n')
         mean_pos /= (num_frames/frame_stride)
 
         print('Calculating displacement CCs')
         for i in range(first_frame, num_frames + first_frame, frame_stride):
-            self.univ.trajectory[i]
-            pos = np.array(self.atoms.positions) - mean_pos
+            _ = self.univ.trajectory[i]
+            pos = cp.array(self.atoms.positions) - mean_pos
             pos = (pos.T * self.atom_f0).T # F-weighting the displacements
-            corr[0] += np.outer(pos[:,0], pos[:,0])
-            corr[1] += np.outer(pos[:,1], pos[:,1])
-            corr[2] += np.outer(pos[:,2], pos[:,2])
-            corr[3] += np.outer(pos[:,0], pos[:,1])
-            corr[4] += np.outer(pos[:,1], pos[:,2])
-            corr[5] += np.outer(pos[:,2], pos[:,0])
+            corr[0] += cp.outer(pos[:, 0], pos[:, 0])
+            corr[1] += cp.outer(pos[:, 1], pos[:, 1])
+            corr[2] += cp.outer(pos[:, 2], pos[:, 2])
+            corr[3] += cp.outer(pos[:, 0], pos[:, 1])
+            corr[4] += cp.outer(pos[:, 1], pos[:, 2])
+            corr[5] += cp.outer(pos[:, 2], pos[:, 0])
             sys.stderr.write('\rFrame %d'%i)
         sys.stderr.write('\n')
 
-        cc_fname = os.path.splitext(self.out_fname)[0] + '_cov.h5'
+        cc_fname = op.splitext(self.out_fname)[0] + '_cov.h5'
         print('Saving covariance matrix to', cc_fname)
 
         #mean_pos -= mean_pos.mean(0)
-        if CUPY:
-            mean_pos = mean_pos.get()
-        dist = numpy.linalg.norm(numpy.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
+        mean_pos = mean_pos.get()
+        dist = np.linalg.norm(np.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
 
-        with h5py.File(cc_fname, 'w') as f:
-            if CUPY:
-                hcorr = corr.get()
-                hf0 = self.atom_f0.get()
-            else:
-                hcorr = corr
-                hf0 = self.atom_f0
+        with h5py.File(cc_fname, 'w') as fptr:
+            hcorr = corr.get()
+            hf0 = self.atom_f0.get()
 
-            f['corr'] = hcorr
-            f['dist'] = dist
-            f['mean_pos'] = mean_pos
-            f['f0'] = hf0 # Atomic scattering factors
+            fptr['corr'] = hcorr
+            fptr['dist'] = dist
+            fptr['mean_pos'] = mean_pos
+            fptr['f0'] = hf0 # Atomic scattering factors
 
 def main():
-    import argparse
-
     parser = argparse.ArgumentParser(description='Generate diffuse intensities from rigid body motion')
     parser.add_argument('-c', '--config', help='Config file. Default: config.ini', default='config_traj.ini')
     parser.add_argument('-n', '--num_frames', help='Number of frames to process. Default: -1 (all)', type=int, default=-1)
@@ -252,8 +192,7 @@ def main():
     parser.add_argument('-C', '--cov', help='Calculate displacement covariance instead of diffuse intensities. Default=False', action='store_true')
     args = parser.parse_args()
 
-    if CUPY:
-        np.cuda.Device(args.device).use()
+    cp.cuda.Device(args.device).use()
 
     trajdiff = TrajectoryDiffuse(args.config)
     if args.cov:
