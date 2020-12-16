@@ -342,6 +342,7 @@ class PCDiffuse():
             fptr.set_data(self.diff_intens.astype('f4'))
 
 def main():
+    '''Run as console script with given config file'''
     parser = argparse.ArgumentParser(description='Diffuse from PC-distorted molecules')
     parser.add_argument('config_file', help='Path to config file')
     parser.add_argument('-d', '--device', help='GPU device number. Default: 0', type=int, default=0)

@@ -183,6 +183,7 @@ class TrajectoryDiffuse():
             fptr['f0'] = hf0 # Atomic scattering factors
 
 def main():
+    '''Run as console script with given config file'''
     parser = argparse.ArgumentParser(description='Generate diffuse intensities from rigid body motion')
     parser.add_argument('-c', '--config', help='Config file. Default: config.ini', default='config_traj.ini')
     parser.add_argument('-n', '--num_frames', help='Number of frames to process. Default: -1 (all)', type=int, default=-1)

@@ -214,6 +214,7 @@ class CovarianceOptimizer():
         return radavg / self.radcount
 
 if __name__ == '__main__':
+    '''Run as console script with given config file and number of iterations'''
     import argparse
 
     parser = argparse.ArgumentParser(description='Bayesian optimization of modes covariance matrix')
