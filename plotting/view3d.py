@@ -6,6 +6,7 @@ import h5py
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
+from skimage import measure
 
 import mrcfile
 import parse_dsn6
@@ -27,7 +28,7 @@ class Viewer3D(QtWidgets.QMainWindow):
                 self.cvol = np.fft.fftshift(self.cvol)
         elif ext == '.ccp4' or ext == '.mrc':
             with mrcfile.open(fname, 'r') as f:
-                self.cvol = f.data
+                self.cvol = np.copy(f.data)
         elif ext == '.h5':
             with h5py.File(fname, 'r') as f:
                 self.cvol = f[self.dset][:]
@@ -38,78 +39,61 @@ class Viewer3D(QtWidgets.QMainWindow):
 
         self.min, self.max = self.cvol.min(), self.cvol.max()
 
-    def _gen_mesh(self, level):
-        verts, faces = pg.isosurface(self.cvol, level)
-        print(verts[:,0].min(), verts[:,0].max())
-        self.mdata = gl.MeshData(verts, faces)
-
-        colors = np.zeros((self.mdata.faceCount(), 4), dtype='f8')
-        #colors[:,0] = (verts[faces[:,0], 0] - verts[:,0].min()) / (verts[:,0].max() - verts[:,0].min())
-        colors[:,0] = np.linspace(0, 1, colors.shape[0])
-        colors[:,2] = 0.5
-        colors[:,3] = 0.7 # Opacity
-        self.mdata.setFaceColors(colors)
-
     def _init_ui(self):
         self.resize(800,800)
-        layout = QtWidgets.QVBoxLayout()
-        widget = QtWidgets.QWidget()
-        self.setCentralWidget(widget)
-        widget.setLayout(layout)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.setCentralWidget(splitter)
 
         # 3D GLView
-        w = gl.GLViewWidget()
-        layout.addWidget(w)
-        w.setCameraPosition(distance=200)
-
-        #g = gl.GLAxisItem()
-        #g.setSize(100,100,100)
-        #w.addItem(g)
+        self.w3d = gl.GLViewWidget()
+        splitter.addWidget(self.w3d)
+        self.w3d.setCameraPosition(distance=200)
 
         # -- Mesh Item
         self.mitem = gl.GLMeshItem(meshdata=self.mdata, smooth=True, shader='balloon', glOptions='additive')
         #mitem = gl.GLMeshItem(meshdata=self.mdata, smooth=True, shader='shaded', glOptions='additive')
         shift = -np.array(self.cvol.shape)/2
         self.mitem.translate(*tuple(shift))
-        w.addItem(self.mitem)
+        self.w3d.addItem(self.mitem)
 
-        # Level slider
-        line = QtWidgets.QHBoxLayout()
-        layout.addLayout(line)
-        self.level_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
-        self.level_slider.setRange(0, self.num_levels)
-        self.level_slider.setValue(int(0.7*self.num_levels))
-        self.level_slider.sliderMoved.connect(self._level_changed)
-        self.level_slider.sliderReleased.connect(self._level_updated)
-        line.addWidget(self.level_slider)
-        self.level_value = QtWidgets.QLineEdit(str(self.min), self)
-        self.level_value.setFixedWidth(80)
-        self.level_value.editingFinished.connect(self._level_updated)
-        self.level_value.setText('%.2e'%self._level_from_value(int(0.7*self.num_levels)))
-        line.addWidget(self.level_value)
+        # Histogram
+        self.levelplot = pg.PlotWidget()
+        splitter.addWidget(self.levelplot)
+        self.levelplot.setLogMode(y=True)
+        self.level = pg.InfiniteLine(0, movable=True)
+        self.level.sigPositionChangeFinished.connect(self._level_updated)
+        self.levelplot.addItem(self.level)
+        self._refresh_levelplot()
 
+        splitter.setSizes([400,100])
         self.show()
 
+    def _gen_mesh(self, level):
+        verts, faces = measure.marching_cubes_lewiner(self.cvol, level)[:2]
+        #verts, faces = pg.isosurface(self.cvol, level)
+        #print(verts[:,0].min(), verts[:,0].max())
+        self.mdata = gl.MeshData(verts, faces)
+
+        colors = np.ones((self.mdata.faceCount(), 4), dtype='f8') * 0.2
+        cen = np.array(self.cvol.shape) // 2
+        #colors[:,0] = (verts[faces[:,0], 0] - verts[:,0].min()) / (verts[:,0].max() - verts[:,0].min())
+        #colors[:,0] = np.linspace(0, 1, colors.shape[0])
+        colors[:,2] = np.linalg.norm((verts[faces[:,0]] - cen) / cen, axis=1)
+        #colors[:,2] = 1
+        colors[:,3] = 0.7 # Opacity
+        self.mdata.setFaceColors(colors)
+
+    def _refresh_levelplot(self):
+        hy, hx = np.histogram(self.cvol.ravel(), bins=500)
+        hy[hy==0] = 1
+        self.levelplot.plot(hx, hy, stepMode=True, fillLevel=0.1, brush=(51,51,255,51))
+        vmin, vmax = self.cvol.min(), self.cvol.max()
+        self.level.setPos(vmin + 0.7*(vmax-vmin))
+
     def _level_updated(self):
-        value = float(self.level_slider.value())
-        level = self.min + value/self.num_levels * (self.max - self.min)
-        self._gen_mesh(level)
+        self._gen_mesh(self.level.value())
         self.mitem.setMeshData(meshdata=self.mdata)
-
-    def _level_changed(self, value=None):
-        if value is None:
-            level = float(self.level_value.text())
-            value = self._value_from_level(level)
-            self.level_slider.setValue(value)
-        else:
-            level = self._level_from_value(value)
-            self.level_value.setText('%.2e'%level)
-
-    def _value_from_level(self, level):
-        return int(np.round(float(self.num_levels) * (level - self.min) / (self.max - self.min)))
-
-    def _level_from_value(self, value):
-        return self.min + float(value)/self.num_levels * (self.max - self.min)
+        self.mitem.meshDataChanged()
 
 if __name__ == '__main__':
     import argparse
@@ -119,6 +103,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     app = QtGui.QApplication([])
-    #v = Viewer3D('/home/ayyerkar/acads/ATP/2w5j_cutout_2mFo-DFc.omap')
     v = Viewer3D(args.file, args.dset)
     sys.exit(app.exec_())
