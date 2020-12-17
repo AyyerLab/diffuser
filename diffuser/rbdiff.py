@@ -1,6 +1,8 @@
 '''Calculate diffuse scattering from rigid body motions of electron density'''
 
 import sys
+import argparse
+import configparser
 import numpy as np
 import cupy as cp
 from cupyx.scipy import ndimage
@@ -10,12 +12,16 @@ import h5py
 class RBDiffuse():
     '''Calculate diffuse intensities from electron density map and rigid-body parameters'''
     def __init__(self, rot_plane=(1,2)):
+        self.rot_plane = rot_plane
         self.size = None
         self.diff_intens = None
-        self.rot_plane = rot_plane
+        self.dens = None
+        self.fdens = None
+        self.cella = None
         self.mean_fdens = None
         self.mean_intens = None
         self.denominator = None
+        self.qvec = None
 
     def _rot_fdens(self, in_fdens, ang):
         out = cp.empty_like(in_fdens)
@@ -24,13 +30,14 @@ class RBDiffuse():
         return out
 
     def _trans_fdens(self, in_fdens, vec):
-        return in_fdens * cp.exp(-1j * (self.qx*vec[0] + self.qy*vec[1] + self.qz*vec[2]))
+        x, y, z = self.qvec
+        return in_fdens * cp.exp(-1j * (x*vec[0] + y*vec[1] + z*vec[2]))
 
     def parse(self, fname):
         '''Parse electron density from file'''
-        with mrcfile.open(fname, 'r') as f:
-            self.dens = cp.array(f.data)
-            self.cella = f.header.cella['x']
+        with mrcfile.open(fname, 'r') as fptr:
+            self.dens = cp.array(fptr.data)
+            self.cella = fptr.header.cella['x']
         self.fdens = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(self.dens)))
 
     def init_diffcalc(self, translate=True):
@@ -42,17 +49,20 @@ class RBDiffuse():
         if translate and self.size != self.fdens.shape[0]:
             self.size = self.fdens.shape[0]
             cen = self.size // 2
-            self.qx, self.qy, self.qz = cp.indices(self.fdens.shape, dtype='f4')
-            self.qx = (self.qx - cen) / self.size * 2. * cp.pi
-            self.qy = (self.qy - cen) / self.size * 2. * cp.pi
-            self.qz = (self.qz - cen) / self.size * 2. * cp.pi
+            x, y, z = cp.indices(self.fdens.shape, dtype='f4')
+            x = (x - cen) / self.size * 2. * cp.pi
+            y = (y - cen) / self.size * 2. * cp.pi
+            z = (z - cen) / self.size * 2. * cp.pi
+            self.qvec = (x, y, z)
 
-    def run_mc(self, num_steps, sigma_deg, cov_vox, prefix='', reset=False):
-        '''Run Monte Carlo sampling of rigid body motions to get diffuse intensity'''
+    def run_mc(self, num_steps, sigma_deg, cov_vox, prefix=''):
+        '''Run Monte Carlo sampling of rigid body motions to get diffuse intensity
+
+        By default, this adds to the existing 1st and second moments.
+        Run init_diffcalc() to reset accumulation.
+        '''
         shifts = cp.array(np.random.multivariate_normal(np.zeros(3), cov_vox, size=num_steps))
         angles = cp.random.randn(num_steps) * sigma_deg
-        if reset:
-            self.init_diffcalc(translate=True)
 
         for i in range(num_steps):
             if shifts[i].max() != 0.:
@@ -70,12 +80,14 @@ class RBDiffuse():
             sys.stderr.write('\r%s%d/%d      ' % (prefix, i+1, num_steps))
         sys.stderr.write('\n')
 
-    def rotate_weighted(self, num_steps, sigma_deg, reset=True):
-        '''Get diffuse intensities by rotating object about single axis'''
+    def rotate_weighted(self, num_steps, sigma_deg):
+        '''Get diffuse intensities by rotating object about single axis
+
+        By default, this adds to the existing 1st and second moments.
+        Run init_diffcalc() to reset accumulation.
+        '''
         angles = cp.linspace(-3*sigma_deg, 3*sigma_deg, num_steps)
         weights = cp.exp(-angles**2/2./sigma_deg**2)
-        if reset:
-            self.init_diffcalc(translate=False)
 
         for i in range(num_steps):
             rotfdens = self._rot_fdens(self.fdens, angles[i])
@@ -103,14 +115,21 @@ class RBDiffuse():
             fptr['diff_intens'] = self.diff_intens.astype('f4')
 
 def main():
-    '''Run with test data (example code)'''
-    fname = 'data/2w5j_cutout_rot_remap.ccp4'
-    out_fname = 'data/2w5j_diffcalc.ccp4'
-    sigma_deg = 7
-    sigma_vox = 0.8
-    rot_plane = (1, 2) # Rotate about x-axis
-    num_steps = 21
-    cov_vox = np.identity(3)*sigma_vox**2
+    '''Run as console script with config file'''
+    parser = argparse.ArgumentParser(description='Diffuse scattering from rigid-body motion of electron density')
+    parser.add_argument('config_file', help='Path to config file')
+    parser.add_argument('-d', '--device', help='GPU device number. Default: 0', type=int, default=0)
+    args = parser.parse_args()
+
+    conf = configparser.ConfigParser()
+    conf.read(args.config_file)
+    fname = conf.get('files', 'dens_fname')
+    out_fname = conf.get('files', 'output_fname')
+    num_steps = conf.getint('parameters', 'num_steps')
+    sigma_deg = conf.getfloat('parameters', 'sigma_deg', fallback=0.)
+    rot_plane = tuple(np.delete([0, 1, 2], conf.getint('parameters', 'rot_axis', fallback=2)))
+    sigma_vox = conf.getfloat('parameters', 'sigma_vox', fallback=0.)
+    cov_vox = np.identity(3) * sigma_vox**2
 
     # Instantiate class
     rbd = RBDiffuse(rot_plane=rot_plane)
