@@ -4,6 +4,10 @@ __pycache__/
 # Data directory
 /data
 
-# All ini files except config.ini
+# Config files
 *.ini
-~config.ini
+
+# Data files
+*.xtc
+*.tpr
+*.pdb
