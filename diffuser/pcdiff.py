@@ -18,7 +18,7 @@ class PCDiffuse():
         self.diff_intens = None
 
     def _parse_config(self, config_file):
-        self.dgen = DensityGenerator(config_file, vecs=True)
+        self.dgen = DensityGenerator(config_file, vecs=True, grid=True)
         self.num_steps = self.dgen.config.getint('parameters', 'num_steps')
 
         self.out_fname = self.dgen.config.get_path('files', 'out_fname', fallback=None)
