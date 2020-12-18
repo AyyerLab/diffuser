@@ -12,8 +12,9 @@ class TrajectoryDiffuse():
 
     Also generates displacement covariance matrix from trajectory
     '''
-    def __init__(self, config_file):
-        self.dgen = DensityGenerator(config_file, vecs=False)
+    def __init__(self, config_file, cov_only=False):
+        grid = not cov_only
+        self.dgen = DensityGenerator(config_file, vecs=False, grid=grid)
         self.num_steps = self.dgen.config.getint('parameters', 'num_steps')
 
         self.out_fname = self.dgen.config.get_path('files', 'out_fname', fallback=None)
@@ -113,7 +114,7 @@ def main():
 
     cp.cuda.Device(args.device).use()
 
-    trajdiff = TrajectoryDiffuse(args.config)
+    trajdiff = TrajectoryDiffuse(args.config, cov_only=args.cov)
     if args.cov:
         trajdiff.run_cc(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
     else:
