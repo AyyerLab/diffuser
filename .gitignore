@@ -11,3 +11,5 @@ __pycache__/
 *.xtc
 *.tpr
 *.pdb
+*.h5
+*.npz
