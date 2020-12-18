@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(name = 'diffuser',
     version = '0.1',
@@ -8,6 +8,7 @@ setup(name = 'diffuser',
         'diffuser.pcdiff = diffuser.pcdiff:main',
         'diffuser.traj_diff = diffuser.traj_diff:main',
         'diffuser.rbdiff = diffuser.rbdiff:main',
+        'diffuser.process_md = diffuser.process_md:main',
       ],
     },
 )
