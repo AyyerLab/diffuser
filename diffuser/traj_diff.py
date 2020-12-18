@@ -20,7 +20,10 @@ class TrajectoryDiffuse():
         self.out_fname = self.dgen.config.get_path('files', 'out_fname', fallback=None)
         if self.out_fname is None:
             traj_fname = self.dgen.config.get_path('files', 'traj_fname')
-            self.out_fname = op.splitext(traj_fname)[0] + '_traj_diffcalc.h5'
+            if cov_only:
+                self.out_fname = op.splitext(traj_fname)[0] + '_cov.h5'
+            else:
+                self.out_fname = op.splitext(traj_fname)[0] + '_traj_diffcalc.h5'
 
         self.rbd = RBDiffuse(self.dgen.rot_plane)
 
@@ -78,14 +81,12 @@ class TrajectoryDiffuse():
             sys.stderr.write('\rFrame %d'%i)
         sys.stderr.write('\n')
 
-        cc_fname = op.splitext(self.out_fname)[0] + '_cov.h5'
-        print('Saving covariance matrix to', cc_fname)
-
         #mean_pos -= mean_pos.mean(0)
         mean_pos = mean_pos.get()
         dist = np.linalg.norm(np.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
 
-        with h5py.File(cc_fname, 'w') as fptr:
+        print('Saving covariance matrix to', self.out_fname)
+        with h5py.File(self.out_fname, 'w') as fptr:
             hcorr = corr.get() # pylint: disable=no-member
             hf0 = self.dgen.atom_f0.get()
 
