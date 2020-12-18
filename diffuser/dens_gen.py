@@ -55,7 +55,7 @@ class DensityGenerator():
         self.z = z
 
         # B_sol filter
-        b_sol = self.config.getfloat('parameters', 'b_sol_A2', default=30.)
+        b_sol = self.config.getfloat('parameters', 'b_sol_A2', fallback=30.)
         self.b_sol_filt = cp.fft.ifftshift(cp.exp(-b_sol * self.qrad**2))
 
     def _get_vecs(self):
