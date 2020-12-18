@@ -1,3 +1,5 @@
+# pylint: disable=too-many-instance-attributes
+
 import os.path as op
 import numpy as np
 import h5py
@@ -8,7 +10,7 @@ from diffuser import DiffuserConfig
 
 class DensityGenerator():
     '''Generate density grid from coordinates'''
-    def __init__(self, config_file, vecs=False):
+    def __init__(self, config_file, grid=False, vecs=False):
         if isinstance(config_file, DiffuserConfig):
             self.config = config_file
         else:
@@ -24,8 +26,9 @@ class DensityGenerator():
         self.a2vox = cp.array((self.qvox * self.size)).astype('f4')
 
         self._get_rbparams()
-        self._gen_grid()
         self._get_univ()
+        if grid:
+            self._gen_grid()
         if vecs:
             self._get_vecs()
 
