@@ -49,12 +49,12 @@ def main():
     vals_n = vals[sorter[:args.num_vecs]].astype('f4')
     vecs_n = vecs[:, sorter[:args.num_vecs]].astype('f4')
 
-    vec_weights = np.full((args.num_vecs, ), 10.)
+    vec_weights = np.diag(np.ones(args.num_vecs) * 10.)
 
     # Save to file
     with h5py.File(args.vecs_fname, 'w') as fptr:
         fptr['vecs'] = vecs_n
-        fptr['weights'] = vec_weights
+        fptr['cov_weights'] = vec_weights
         fptr['orig_vals'] = vals_n
 
 if __name__ == '__main__':
