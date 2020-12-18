@@ -9,6 +9,8 @@ from cupyx.scipy import ndimage
 import mrcfile
 import h5py
 
+from diffuser import DiffuserConfig
+
 class RBDiffuse():
     '''Calculate diffuse intensities from electron density map and rigid-body parameters'''
     def __init__(self, rot_plane=(1,2)):
@@ -121,10 +123,9 @@ def main():
     parser.add_argument('-d', '--device', help='GPU device number. Default: 0', type=int, default=0)
     args = parser.parse_args()
 
-    conf = configparser.ConfigParser()
-    conf.read(args.config_file)
-    fname = conf.get('files', 'dens_fname')
-    out_fname = conf.get('files', 'output_fname')
+    conf = DiffuserConfig(args.config_file)
+    fname = conf.get_path('files', 'dens_fname')
+    out_fname = conf.get_path('files', 'output_fname')
     num_steps = conf.getint('parameters', 'num_steps')
     sigma_deg = conf.getfloat('parameters', 'sigma_deg', fallback=0.)
     rot_plane = tuple(np.delete([0, 1, 2], conf.getint('parameters', 'rot_axis', fallback=2)))
