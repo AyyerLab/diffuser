@@ -32,7 +32,7 @@ def parse(fname, dset=None):
 
 parser = argparse.ArgumentParser(description='Simple slices viewer')
 parser.add_argument('fname', help='File to view')
-parser.add_argument('-d', '--dset', help='Dataset name if HDF5 file')
+parser.add_argument('-d', '--dset', help='Dataset name if HDF5 file', default='diff_intens')
 parser.add_argument('-g', '--gamma', help='Gamma factor to change color scale', type=float, default=0.4)
 parser.add_argument('--cmap', help='Matplotlib color map', default='coolwarm')
 args = parser.parse_args()
