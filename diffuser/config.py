@@ -3,6 +3,8 @@ import configparser
 import numpy as np
 import h5py
 
+_UNSET = object()
+
 class DiffuserConfig(configparser.ConfigParser):
     '''Custom ConfigParser with utility functions'''
     def __init__(self, config_file):
@@ -10,9 +12,9 @@ class DiffuserConfig(configparser.ConfigParser):
         self.read(config_file)
         self.config_folder = op.dirname(config_file)
 
-    def get_path(self, section, key, *, fallback=None):
+    def get_path(self, section, key, *, fallback=_UNSET):
         '''Get path to file assuming they are relative to config file'''
-        if fallback is None:
+        if fallback is _UNSET:
             param = self.get(section, key)
         else:
             param = self.get(section, key, fallback=fallback)
