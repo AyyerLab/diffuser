@@ -18,11 +18,10 @@ class DiffuserConfig(configparser.ConfigParser):
             param = self.get(section, key)
         else:
             param = self.get(section, key, fallback=fallback)
-        
+
         if param is None:
             return None
-        else:
-            return op.join(self.config_folder, param)
+        return op.join(self.config_folder, param)
 
     def get_size(self):
         '''Return 3-vector of size parameters'''
