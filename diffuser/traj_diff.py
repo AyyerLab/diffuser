@@ -13,7 +13,7 @@ class TrajectoryDiffuse():
     Also generates displacement covariance matrix from trajectory
     '''
     def __init__(self, config_file):
-        self.dgen = DensityGenerator(config_file, vecs=True)
+        self.dgen = DensityGenerator(config_file, vecs=False)
         self.num_steps = self.dgen.config.getint('parameters', 'num_steps')
 
         self.out_fname = self.dgen.config.get_path('files', 'out_fname', fallback=None)
@@ -22,8 +22,6 @@ class TrajectoryDiffuse():
             self.out_fname = op.splitext(traj_fname)[0] + '_diffcalc.h5'
 
         self.rbd = RBDiffuse(self.dgen.rot_plane)
-        with open('kernels.cu', 'r') as fptr:
-            self.k_gen_dens = cp.RawModule(code=fptr.read()).get_function('gen_dens')
 
     def run(self, num_frames=-1, first_frame=0, frame_stride=1, init=True):
         '''Calculate and save diffuse scattering from trajectory and rigid-body parameters'''
@@ -87,7 +85,7 @@ class TrajectoryDiffuse():
         dist = np.linalg.norm(np.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
 
         with h5py.File(cc_fname, 'w') as fptr:
-            hcorr = corr.get()
+            hcorr = corr.get() # pylint: disable=no-member
             hf0 = self.dgen.atom_f0.get()
 
             fptr['corr'] = hcorr
