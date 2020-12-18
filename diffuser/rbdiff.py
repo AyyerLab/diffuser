@@ -1,8 +1,7 @@
-'''Calculate diffuse scattering from rigid body motions of electron density'''
+# pylint: disable=too-many-instance-attributes
 
 import sys
 import argparse
-import configparser
 import numpy as np
 import cupy as cp
 from cupyx.scipy import ndimage
