@@ -18,11 +18,11 @@ class TrajectoryDiffuse():
 
         self.out_fname = self.dgen.config.get_path('files', 'out_fname', fallback=None)
         if self.out_fname is None:
-            topo_fname = self.dgen.config.get_path('files', 'topo_fname')
+            traj_fname = self.dgen.config.get_path('files', 'traj_fname')
             if cov_only:
-                self.out_fname = op.splitext(topo_fname)[0] + '_cov.h5'
+                self.out_fname = op.splitext(traj_fname)[0] + '_cov.h5'
             else:
-                self.out_fname = op.splitext(topo_fname)[0] + '_traj_diffcalc.h5'
+                self.out_fname = op.splitext(traj_fname)[0] + '_traj_diffcalc.h5'
 
         self.rbd = RBDiffuse(self.dgen.rot_plane)
 
@@ -51,8 +51,8 @@ class TrajectoryDiffuse():
         '''Save electron density of trajectory frame'''
         dens = self.dgen.gen_frame_dens(ind).get()
         if out_fname is None:
-            topo_fname = self.dgen.config.get_path('files', 'topo_fname')
-            out_fname = op.splitext(topo_fname)[0] + '_frame_dens.h5'
+            traj_fname = self.dgen.config.get_path('files', 'traj_fname')
+            out_fname = op.splitext(traj_fname)[0] + '_frame_dens.h5'
 
         with h5py.File(out_fname, 'w') as fptr:
             fptr['dens'] = dens
@@ -61,8 +61,7 @@ class TrajectoryDiffuse():
 def main():
     '''Run as console script with given config file'''
     parser = argparse.ArgumentParser(description='Generate diffuse intensities from rigid body motion')
-    parser.add_argument('-c', '--config',
-                        help='Config file. Default: config.ini', default='config_traj.ini')
+    parser.add_argument('config_file', help='Path to config file')
     parser.add_argument('-n', '--num_frames',
                         help='Number of frames to process. Default: -1 (all)', type=int, default=-1)
     parser.add_argument('-f', '--first_frame',
@@ -75,7 +74,7 @@ def main():
 
     cp.cuda.Device(args.device).use()
 
-    trajdiff = TrajectoryDiffuse(args.config, cov_only=args.cov)
+    trajdiff = TrajectoryDiffuse(args.config_file)
     trajdiff.run(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
 
 if __name__ == '__main__':
