@@ -20,7 +20,7 @@ class TrajectoryDiffuse():
         self.out_fname = self.dgen.config.get_path('files', 'out_fname', fallback=None)
         if self.out_fname is None:
             traj_fname = self.dgen.config.get_path('files', 'traj_fname')
-            self.out_fname = op.splitext(traj_fname)[0] + '_diffcalc.h5'
+            self.out_fname = op.splitext(traj_fname)[0] + '_traj_diffcalc.h5'
 
         self.rbd = RBDiffuse(self.dgen.rot_plane)
 

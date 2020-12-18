@@ -24,7 +24,7 @@ class PCDiffuse():
         self.out_fname = self.dgen.config.get_path('files', 'out_fname', fallback=None)
         if self.out_fname is None:
             pdb_fname = self.dgen.config.get_path('files', 'pdb_fname')
-            self.out_fname = op.splitext(pdb_fname)[0] + '_diffcalc.h5'
+            self.out_fname = op.splitext(pdb_fname)[0] + '_pc_diffcalc.h5'
 
     def _init_diffcalc(self):
         mean_fdens = cp.zeros(tuple(self.dgen.size), dtype='c8')
