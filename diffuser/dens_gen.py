@@ -1,3 +1,4 @@
+import os.path as op
 import numpy as np
 import h5py
 import cupy as cp
@@ -13,7 +14,7 @@ class DensityGenerator():
         else:
             self.config = DiffuserConfig(config_file)
 
-        with open('kernels.cu', 'r') as fptr:
+        with open(op.join(op.difname(__file__), 'kernels.cu'), 'r') as fptr:
             self.k_gen_dens = cp.RawModule(code=fptr.read()).get_function('gen_dens')
         self.cov_weights = cp.array([0.])
 
