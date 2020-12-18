@@ -15,8 +15,6 @@ class PCDiffuse():
     '''
     def __init__(self, config_fname):
         self._parse_config(config_fname)
-        with open('kernels.cu', 'r') as fptr:
-            self.k_gen_dens = cp.RawModule(code=fptr.read()).get_function('gen_dens')
         self.diff_intens = None
 
     def _parse_config(self, config_file):
