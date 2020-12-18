@@ -1,7 +1,6 @@
 import sys
 import os.path as op
 import argparse
-import numpy as np
 import h5py
 import cupy as cp
 
@@ -19,11 +18,11 @@ class TrajectoryDiffuse():
 
         self.out_fname = self.dgen.config.get_path('files', 'out_fname', fallback=None)
         if self.out_fname is None:
-            traj_fname = self.dgen.config.get_path('files', 'traj_fname')
+            topo_fname = self.dgen.config.get_path('files', 'topo_fname')
             if cov_only:
-                self.out_fname = op.splitext(traj_fname)[0] + '_cov.h5'
+                self.out_fname = op.splitext(topo_fname)[0] + '_cov.h5'
             else:
-                self.out_fname = op.splitext(traj_fname)[0] + '_traj_diffcalc.h5'
+                self.out_fname = op.splitext(topo_fname)[0] + '_traj_diffcalc.h5'
 
         self.rbd = RBDiffuse(self.dgen.rot_plane)
 
@@ -48,52 +47,16 @@ class TrajectoryDiffuse():
         print('Saving output to', self.out_fname)
         self.rbd.save(self.out_fname)
 
-    def run_cc(self, num_frames=-1, first_frame=0, frame_stride=1):
-        '''Calculate and save displacement covariance matrix'''
-        if num_frames + first_frame > len(self.dgen.univ.trajectory) or num_frames == -1:
-            num_frames = len(self.dgen.univ.trajectory) - first_frame
-        print('Calculating displacement CC for %d frames' % num_frames)
+    def get_frame_dens(self, ind, out_fname=None):
+        '''Save electron density of trajectory frame'''
+        dens = self.dgen.gen_frame_dens(ind).get()
+        if out_fname is None:
+            topo_fname = self.dgen.config.get_path('files', 'topo_fname')
+            out_fname = op.splitext(topo_fname)[0] + '_frame_dens.h5'
 
-        num_atoms = self.dgen.atoms.n_atoms
-        print('Position of %d atoms will be used' % num_atoms)
-
-        print('Calculating mean position over selected frames')
-        mean_pos = cp.zeros((num_atoms, 3))
-        for i in range(first_frame, num_frames + first_frame, frame_stride):
-            _ = self.dgen.univ.trajectory[i]
-            mean_pos += cp.array(self.dgen.atoms.positions)
-            sys.stderr.write('\rFrame %d'%i)
-        sys.stderr.write('\n')
-        mean_pos /= (num_frames/frame_stride)
-
-        print('Calculating displacement CCs')
-        corr = cp.zeros((6, num_atoms, num_atoms))
-        for i in range(first_frame, num_frames + first_frame, frame_stride):
-            _ = self.dgen.univ.trajectory[i]
-            pos = cp.array(self.dgen.atoms.positions) - mean_pos
-            pos = (pos.T * self.dgen.atom_f0).T # F-weighting the displacements
-            corr[0] += cp.outer(pos[:, 0], pos[:, 0])
-            corr[1] += cp.outer(pos[:, 1], pos[:, 1])
-            corr[2] += cp.outer(pos[:, 2], pos[:, 2])
-            corr[3] += cp.outer(pos[:, 0], pos[:, 1])
-            corr[4] += cp.outer(pos[:, 1], pos[:, 2])
-            corr[5] += cp.outer(pos[:, 2], pos[:, 0])
-            sys.stderr.write('\rFrame %d'%i)
-        sys.stderr.write('\n')
-
-        #mean_pos -= mean_pos.mean(0)
-        mean_pos = mean_pos.get()
-        dist = np.linalg.norm(np.subtract.outer(mean_pos, mean_pos)[:,[0,1,2],:,[0,1,2]], axis=0)
-
-        print('Saving covariance matrix to', self.out_fname)
-        with h5py.File(self.out_fname, 'w') as fptr:
-            hcorr = corr.get() # pylint: disable=no-member
-            hf0 = self.dgen.atom_f0.get()
-
-            fptr['corr'] = hcorr
-            fptr['dist'] = dist
-            fptr['mean_pos'] = mean_pos
-            fptr['f0'] = hf0 # Atomic scattering factors
+        with h5py.File(out_fname, 'w') as fptr:
+            fptr['dens'] = dens
+            fptr['index'] = ind
 
 def main():
     '''Run as console script with given config file'''
@@ -108,18 +71,12 @@ def main():
                         help='Stride length for frames. Default: 1', type=int, default=1)
     parser.add_argument('-d', '--device',
                         help='GPU device ID (if applicable). Default: 0', type=int, default=0)
-    parser.add_argument('-C', '--cov',
-                        help='Calculate displacement covariance instead of diffuse intensities. Default=False',
-                        action='store_true')
     args = parser.parse_args()
 
     cp.cuda.Device(args.device).use()
 
     trajdiff = TrajectoryDiffuse(args.config, cov_only=args.cov)
-    if args.cov:
-        trajdiff.run_cc(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
-    else:
-        trajdiff.run(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
+    trajdiff.run(args.num_frames, first_frame=args.first_frame, frame_stride=args.frame_stride)
 
 if __name__ == '__main__':
     main()
