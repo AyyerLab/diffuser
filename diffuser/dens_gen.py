@@ -14,7 +14,7 @@ class DensityGenerator():
         else:
             self.config = DiffuserConfig(config_file)
 
-        with open(op.join(op.difname(__file__), 'kernels.cu'), 'r') as fptr:
+        with open(op.join(op.dirname(__file__), 'kernels.cu'), 'r') as fptr:
             self.k_gen_dens = cp.RawModule(code=fptr.read()).get_function('gen_dens')
         self.cov_weights = cp.array([0.])
 
