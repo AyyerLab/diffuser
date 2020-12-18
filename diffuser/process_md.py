@@ -1,5 +1,6 @@
 import sys
 import os.path as op
+import argparse
 import numpy as np
 import h5py
 import cupy as cp
@@ -11,13 +12,15 @@ class MDProcessor():
     def __init__(self, config_file):
         self.dgen = DensityGenerator(config_file, vecs=False, grid=False)
 
-        topo_fname = self.dgen.config.get_path('files', 'topo_fname')
+        self.traj_fname = self.dgen.config.get_path('files', 'traj_fname')
+
+        self.cov_fname = self.dgen.config.get_path('files', 'cov_fname', fallback=None)
+        if self.cov_fname is None:
+            self.cov_fname = op.splitext(self.traj_fname)[0] + '_cov.h5'
+
         self.vecs_fname = self.dgen.config.get_path('files', 'vecs_fname', fallback=None)
         if self.vecs_fname is None:
-            self.vecs_fname = op.splitext(topo_fname)[0] + '_vecs.h5'
-        self.cov_fname = self.dgen.config.get_path('files', 'cov_fname', fallback=None)
-        if self.vecs_fname is None:
-            self.vecs_fname = op.splitext(topo_fname)[0] + '_cov.h5'
+            self.vecs_fname = op.splitext(self.traj_fname)[0] + '_vecs.h5'
 
         self.cov = None
 
@@ -98,6 +101,7 @@ class MDProcessor():
         vecs_n = vecs[:, sorter[:num_vecs]].astype('f4')
 
         # Save to file
+        print('Saving PC vectors to', self.vecs_fname)
         with h5py.File(self.vecs_fname, 'w') as fptr:
             fptr['vecs'] = vecs_n.get()
             fptr['cov_weights'] = np.diag(np.ones(num_vecs) * 10.)
@@ -118,3 +122,48 @@ class MDProcessor():
         allcov[2, :, 2] = cov[2]
 
         return allcov.reshape(cov.shape[1]*3, cov.shape[2]*3)
+
+    def write_mean_pos(self, pdb_fname=None):
+        '''Write mean positions from covariance file to pdb'''
+        if pdb_fname is None:
+            pdb_fname = op.splitext(self.traj_fname)[0] + '_avg.pdb'
+
+        with h5py.File(self.cov_fname, 'r') as fptr:
+            p_avg = fptr['mean_pos'][:]
+
+        self.dgen.atoms.positions = p_avg
+
+        print('Writing mean_positions to', pdb_fname)
+        self.dgen.atoms.write(pdb_fname)
+
+def main():
+    '''Run as console script with given config file'''
+    parser = argparse.ArgumentParser(description='Process MD trajectory')
+    parser.add_argument('config_file', help='Path to config file')
+    parser.add_argument('-C', '--calc_cov', action='store_true',
+                        help='Calculate covariance matrix from trajectory')
+    parser.add_argument('-D', '--diagonalize', action='store_true',
+                        help='Calculate principal vectors from covariance matrix')
+    parser.add_argument('-M', '--meanpos', action='store_true',
+                        help='Write mean positions of trajectory to PDB file')
+    parser.add_argument('-n', '--num_vecs', type=int, default=100,
+                        help='Number of PC vecs to save (default: 100)')
+    parser.add_argument('-d', '--device', help='GPU device number. Default: 0', type=int, default=0)
+    args = parser.parse_args()
+
+    if not (args.calc_cov or args.diagonalize or args.meanpos):
+        print('Need either -C or -D option to describe what to do')
+        return
+
+    cp.cuda.Device(args.device).use()
+
+    mdproc = MDProcessor(args.config_file)
+    if args.calc_cov:
+        mdproc.calc_cov()
+    if args.diagonalize:
+        mdproc.calc_vecs(args.num_vecs)
+    if args.meanpos:
+        mdproc.write_mean_pos()
+
+if __name__ == '__main__':
+    main()
