@@ -8,7 +8,7 @@ class DiffuserConfig(configparser.ConfigParser):
     def __init__(self, config_file):
         super().__init__()
         self.read(config_file)
-        self.config_folder = op.dirname(config_fname)
+        self.config_folder = op.dirname(config_file)
 
     def get_path(self, section, key, *, fallback=None):
         '''Get path to file assuming they are relative to config file'''
