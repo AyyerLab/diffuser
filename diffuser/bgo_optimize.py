@@ -1,46 +1,47 @@
-import configparser
+import argparse
 import numpy as np
 import cupy as cp
 import h5py
 import skopt
 from skopt.callbacks import CheckpointSaver
 
-from diffuser import PCDiffuse
+from diffuser import PCDiffuse, DiffuserConfig, Liquidizer
 
 class CovarianceOptimizer():
     '''Class to run Bayesian optimization to get best covariance parameters
     matching the calculated and target diffuse scattering
     '''
     def __init__(self, config_file):
-        conf = configparser.ConfigParser()
-        conf.read(config_file)
+        conf = DiffuserConfig(config_file)
         with h5py.File(conf.get('optimizer', 'itarget_fname'), 'r') as fptr:
             self.i_target = fptr['diff_intens'][:]
 
         # Setup PCDiff...
         self.num_steps = conf.getint('optimizer', 'num_steps')
         self.num_vecs = conf.getint('optimizer', 'num_vecs')
+        self.output_fname = conf.get('optimizer', 'output_fname')
+        intern_fname = conf.get('optimizer', 'intern_intens_fname', fallback=None)
+
+        self.diag_bounds = conf.get_bounds('optimizer', 'diag_bounds')
+        self.offdiag_bounds = conf.get_bounds('optimizer', 'offdiag_bounds')
+        self.llm_sigma_bounds = conf.get_bounds('optimizer', 'LLM_sigma_A_bounds')
+        self.llm_gamma_bounds = conf.get_bounds('optimizer', 'LLM_gamma_A_bounds')
+        self.uncorr_bounds = conf.get_bounds('optimizer', 'uncorr_sigma_A_bounds')
+        self.rbd_bounds = conf.get_bounds('optimizer', 'RBD_sigma_A_bounds')
+        self.rbr_bounds = conf.get_bounds('optimizer', 'RBR_sigma_deg_bounds')
+        self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
+        self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
+        self.lattice_llm = conf.getboolean('optimizer', 'lattice_llm', fallback=False)
+
+        qrange = conf.get_bounds('optimizer', 'q_range', '0.05 1.')
+        self.point_group = conf.get('optimizer', 'point_group', fallback='1')
+
         self.pcd = PCDiffuse(config_file)
         self.pcd.num_steps = self.num_steps
         self.pcd.num_vecs = self.num_vecs
         self.pcd.cov_weights = cp.identity(self.num_vecs)
         self.pcd.vecs = self.pcd.vecs[:,:self.num_vecs]
-        self.size = self.pcd.size
-
-        self.output_fname = conf.get('optimizer', 'output_fname')
-        intern_fname = conf.get('optimizer', 'intern_intens_fname', fallback=None)
-        self.diag_bounds = tuple([float(s) for s in conf.get('optimizer', 'diag_bounds', fallback='0 0').split()])
-        self.offdiag_bounds = tuple([float(s) for s in conf.get('optimizer', 'offdiag_bounds', fallback='0 0').split()])
-        self.llm_sigma_bounds = tuple([float(s) for s in conf.get('optimizer', 'LLM_sigma_A_bounds', fallback = '0 0').split()])
-        self.llm_gamma_bounds = tuple([float(s) for s in conf.get('optimizer', 'LLM_gamma_A_bounds', fallback = '0 0').split()])
-        self.uncorr_bounds = tuple([float(s) for s in conf.get('optimizer', 'uncorr_sigma_A_bounds', fallback = '0 0').split()])
-        self.rbd_bounds = tuple([float(s) for s in conf.get('optimizer', 'RBD_sigma_A_bounds', fallback = '0 0').split()])
-        self.rbr_bounds = tuple([float(s) for s in conf.get('optimizer', 'RBR_sigma_deg_bounds', fallback = '0 0').split()])
-        self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
-        self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
-        self.lattice_llm = conf.getboolean('optimizer', 'lattice_llm', fallback=False)
-        qrange = tuple([float(s) for s in conf.get('optimizer', 'q_range', fallback = '0.05 1').split()])
-        self.point_group = conf.get('optimizer', 'point_group', fallback='1')
+        self.size = self.pcd.dgen.size
 
         if self.point_group not in ['1', '222']:
             raise ValueError('%s point group not implemented' % self.point_group)
@@ -52,6 +53,9 @@ class CovarianceOptimizer():
                 self.i_intern = cp.array(fptr['diff_intens'][:])
         else:
             self.i_intern = None
+
+        if self.dims_code & 32 != 0:
+            self.liq = Liquidizer(self.pcd.dgen)
 
         self.intrad, self.voxmask = self._get_qsel(*qrange)
         self.voxmask &= ~np.isnan(self.i_target)
@@ -166,14 +170,14 @@ class CovarianceOptimizer():
         elif self.i_intern is not None:
             i_mc = self.i_intern
         else:
-            i_mc = self.pcd.get_intens()
+            i_mc = self.pcd.dgen.get_intens()
 
         # Apply LLM transforms
         if self.dims_code & 32 != 0:
             if self.lattice_llm:
-                i_calc = self.pcd.liqlatt(svec[-2], svec[1]) * i_mc
+                i_calc = self.liq.liqlatt(svec[-2], svec[1]) * i_mc
             else:
-                i_calc = self.pcd.liquidize(i_mc, svec[-2], svec[-1])
+                i_calc = self.liq.liquidize(i_mc, svec[-2], svec[-1])
         else:
             i_calc = i_mc
 
@@ -182,7 +186,7 @@ class CovarianceOptimizer():
 
         return i_calc.get()
 
-    def obj_fun (self, svec):
+    def obj_fun(self, svec):
         '''Calcuates (1 - CC) between calculated diffuse with given s-vector and target diffuse'''
         i_calc = self.get_mc_intens(svec)
 
@@ -199,10 +203,11 @@ class CovarianceOptimizer():
         return float(retval)
 
     def _get_qsel(self, qmin, qmax, binsize=None):
+        qrad = self.pcd.dgen.qrad
         if binsize is None:
-            binsize = self.pcd.qrad[0,0,0] - self.pcd.qrad[0,0,1]
-        binrad = (self.pcd.qrad / binsize).get().astype('i4')
-        return binrad, ((self.pcd.qrad >= qmin) & (self.pcd.qrad <= qmax)).get()
+            binsize = qrad[0,0,0] - qrad[0,0,1]
+        binrad = (qrad / binsize).get().astype('i4')
+        return binrad, ((qrad >= qmin) & (qrad <= qmax)).get()
 
     def _get_radavg(self, intens):
         if self.radcount is None:
@@ -215,8 +220,6 @@ class CovarianceOptimizer():
 
 def main():
     '''Run as console script with given config file and number of iterations'''
-    import argparse
-
     parser = argparse.ArgumentParser(description='Bayesian optimization of modes covariance matrix')
     parser.add_argument('config_file', help='Path to config file')
     parser.add_argument('num_iter', help='Number of iterations', type=int)
