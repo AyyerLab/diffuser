@@ -1,3 +1,5 @@
+# pylint: disable=too-many-instance-attributes
+
 import argparse
 import numpy as np
 import cupy as cp
@@ -38,9 +40,9 @@ class CovarianceOptimizer():
 
         self.pcd = PCDiffuse(config_file)
         self.pcd.num_steps = self.num_steps
-        self.pcd.num_vecs = self.num_vecs
-        self.pcd.cov_weights = cp.identity(self.num_vecs)
-        self.pcd.vecs = self.pcd.vecs[:,:self.num_vecs]
+        self.pcd.dgen.num_vecs = self.num_vecs
+        self.pcd.dgen.cov_weights = cp.identity(self.num_vecs)
+        self.pcd.dgen.vecs = self.pcd.dgen.vecs[:,:self.num_vecs]
         self.size = self.pcd.dgen.size
 
         if self.point_group not in ['1', '222']:
@@ -88,6 +90,7 @@ class CovarianceOptimizer():
             )
 
     def _get_dims(self):
+        # pylint: disable=too-many-branches
         ddb = self.diag_bounds
         odb = self.offdiag_bounds
         llmsb = self.llm_sigma_bounds
@@ -140,27 +143,28 @@ class CovarianceOptimizer():
 
     def get_mc_intens(self, svec):
         '''Get MC diffuse intensities for given s-vector'''
+        # pylint: disable=too-many-branches
         # Set up MC parameters
-        self.pcd.cov_weights[:] = 0.
+        self.pcd.dgen.cov_weights[:] = 0.
         n = 0
         for i in range(self.num_vecs):
             for j in range(i+1):
                 if i == j and self.dims_code & 1 != 0:
-                    self.pcd.cov_weights[i, j] = svec[n]**2
+                    self.pcd.dgen.cov_weights[i, j] = svec[n]**2
                     n += 1
                 elif self.dims_code & 2 != 0:
-                    self.pcd.cov_weights[i, j] = svec[n]
-                    self.pcd.cov_weights[j, i] = svec[n]
+                    self.pcd.dgen.cov_weights[i, j] = svec[n]
+                    self.pcd.dgen.cov_weights[j, i] = svec[n]
                     n += 1
 
         if self.dims_code & 4 != 0:
-            self.pcd.sigma_uncorr = svec[n]
+            self.pcd.dgen.sigma_uncorr = svec[n]
             n += 1
         if self.dims_code & 8 != 0:
-            self.pcd.cov_vox = svec[n]**2 * np.identity(3)
+            self.pcd.dgen.cov_vox = svec[n]**2 * np.identity(3)
             n += 1
         if self.dims_code & 16 != 0:
-            self.pcd.sigma_deg = svec[n]
+            self.pcd.dgen.sigma_deg = svec[n]
             n += 1
 
         # Calculate MC intensity if needed
