@@ -88,6 +88,7 @@ class PCDiffuse():
         print('Writing intensities to', out_fname)
         with h5py.File(out_fname, 'w') as fptr:
             fptr['diff_intens'] = self.diff_intens.get().astype('f4')
+            fptr['q_voxel_size'] = self.dgen.qvox
 
 def main():
     '''Run as console script with given config file'''
