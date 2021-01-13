@@ -67,7 +67,7 @@ class CovarianceOptimizer():
             self.i_target -= radavg[self.intrad]
 
     def optimize(self, num_iter, resume=False, n_initial_points=10, **kwargs):
-        '''Run BGO optimizer to find optimal parameters to fit agains target diffuse'''
+        '''Run BGO optimizer to find optimal parameters to fit against target diffuse'''
         if resume:
             cres = skopt.load(self.output_fname)
             x_init = cres.x_iters
