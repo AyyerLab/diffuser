@@ -15,14 +15,14 @@ class CovarianceOptimizer():
     '''
     def __init__(self, config_file):
         conf = DiffuserConfig(config_file)
-        with h5py.File(conf.get('optimizer', 'itarget_fname'), 'r') as fptr:
+        with h5py.File(conf.get_path('optimizer', 'itarget_fname'), 'r') as fptr:
             self.i_target = fptr['diff_intens'][:]
 
         # Setup PCDiff...
         self.num_steps = conf.getint('optimizer', 'num_steps')
         self.num_vecs = conf.getint('optimizer', 'num_vecs')
-        self.output_fname = conf.get('optimizer', 'output_fname')
-        intern_fname = conf.get('optimizer', 'intern_intens_fname', fallback=None)
+        self.output_fname = conf.get_path('optimizer', 'output_fname')
+        intern_fname = conf.get_path('optimizer', 'intern_intens_fname', fallback=None)
 
         self.diag_bounds = conf.get_bounds('optimizer', 'diag_bounds')
         self.offdiag_bounds = conf.get_bounds('optimizer', 'offdiag_bounds')
