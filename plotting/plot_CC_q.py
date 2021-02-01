@@ -60,7 +60,7 @@ def main():
         mask = ~(np.isnan(Vol1) | np.isnan(Vol2))
         rbin = cp.array(opt.intrad)
         num_bins = int(rbin.max() + 1)
-        qbin_size = float(opt.pcd.qrad[0,0,0] - opt.pcd.qrad[0,0,1])
+        qbin_size = float(opt.pcd.dgen.qrad[0,0,0] - opt.pcd.dgen.qrad[0,0,1])
          
         calc_cc.subtract_radavg(Vol1, rbin, num_bins, mask)
         calc_cc.subtract_radavg(Vol2, rbin, num_bins, mask) 
