@@ -8,6 +8,7 @@ def main():
     parser.add_argument('prefix', help='Prefix to relevant files')
     parser.add_argument('-b', '--beta', help='Relaxation parameter, default: 0.02', type=float, default=0.02)
     parser.add_argument('--pdb_fname', help='Path to experimental PDB file (bfac_7.pdb)', default='bfac_7.pdb')
+    parser.add_argument('-T', '--Temp', help='Temperature, default: 295', type=float, default=295.0)
     args = parser.parse_args()
 
     md_xvg_fname = args.prefix + '.xvg'
@@ -20,13 +21,13 @@ def main():
     # bfac_expt Angstrom**2 written as Z-coordinate
     bfac_crys = univ.select_atoms('protein').positions[:, 0]
     # Force constant (kJ/mol/nm^2) 8*np.pi**2*0.008314*295/bfac_crys/3/0.01
-    FC_exp = (8*np.pi**2*0.008314*295/3)/(bfac_crys*0.01)
+    FC_exp = (8*np.pi**2*0.008314*args.Temp/3)/(bfac_crys*0.01)
 
     # Get current MD rmsf values (from xvg) in nm
     rmsf = np.loadtxt(md_xvg_fname, skiprows=17)[:, 1]
     # Force constant (kJ/mol/nm^2)
-    FC_md = 0.008314 * 295 /(rmsf**2)
-
+    FC_md = 0.008314 * args.Temp /(rmsf**2)
+    print(FC_md)
     # Get old restraint force constants (from itp)
     itp_data = np.loadtxt(old_itp_fname, skiprows=4)
     FC_old = itp_data[:, 2:]

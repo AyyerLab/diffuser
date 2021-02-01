@@ -1,7 +1,7 @@
 import cupy as cp
 import numpy as np
 import calc_cc
-import BGO_optimize
+import diffuser
 import skopt
 from skopt import load
 import matplotlib.pylab as P
@@ -24,7 +24,7 @@ def main():
     cp.cuda.Device(args.device).use()
 
     
-    opt = BGO_optimize.CovarianceOptimizer(args.config_file)
+    opt = diffuser.bgo_optimize.CovarianceOptimizer(args.config_file)
         
     pcd = opt.pcd
     num_vecs = opt.num_vecs
@@ -49,7 +49,7 @@ def main():
     #print(sdiag)
     '''
     #get Itarget
-    Itarget = opt.Itarget
+    Itarget = opt.i_target
    
 
     def get_cc_q(Vol1, Vol2):
@@ -67,7 +67,6 @@ def main():
 
         cc = calc_cc.calc_cc(Vol1, Vol2, rbin, num_bins, mask)
         cc = cc.get()    
-        
         # cal q
         q = np.arange(num_bins) * qbin_size
         return(cc, q)
@@ -121,7 +120,7 @@ def main():
     ##Plotting CC v/s q
     ax = P.axes(xlim=(0, q[-1]), ylim=(0, 1))
     P.plot(q, cc, 'r-')
-    P.xlabel('q [1/$\AA$]')
+    P.xlabel(r'1/d ($\mathrm{\AA}^{-1}$)')
     P.ylabel ('Anisotropic CC')
     P.title('simulation vs data')
     P.grid()
