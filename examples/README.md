@@ -22,7 +22,7 @@ In this toy example, we will generate diffuse scattering from a short MD traject
 
 4. Process the MD trajectory to prepare for optimization.
    ```
-   $ diffuser.process_md -C -D -M -n 10 vecs.ini
+   $ diffuser.process_md -C -D -M -n 10 traj.ini
    ```
    The options say to calculate the covariance matrix (`-C`), diagonalize it (`-D`) and save the average positions as a PDB file (`-M`).
 
@@ -37,3 +37,6 @@ In this toy example, we will generate diffuse scattering from a short MD traject
    $ diffuser.bgo_optimize vecs.ini 100
    ```
    Explore `vecs.ini` in more detail to understand what is being optimized.
+
+
+
