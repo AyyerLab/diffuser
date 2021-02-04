@@ -1,6 +1,6 @@
 # _Diffuser_
 
-Optimizing internal dynamics of proteins by fitting agains their diffuse scattering intensities.
+Optimizing internal dynamics of proteins by fitting against their diffuse scattering intensities.
 
 ## Installation
 
@@ -22,4 +22,4 @@ All scripts take their parameters from a config file.
  * `diffuser.bgo_optimize` - Bayesian optimization by tuning the weights in `pcdiff` to fit against a target intensity distribution
 
 ### Tutorial
-Go to the `examples/` fodler for a basic tutorial.
+Go to the `examples/` folder for a basic tutorial.
