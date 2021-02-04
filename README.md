@@ -4,7 +4,7 @@ Optimizing internal dynamics of proteins by fitting agains their diffuse scatter
 
 ## Installation
 
-This is a pure-python package using CuPy for GPU computation. Create a conda environment or virtualenv and install using the command:
+This is a pure-python package using CuPy for GPU computation. Create a conda environment or virtualenv and install Cupy using the documentation given [here](https://docs.cupy.dev/en/stable/install.html). _Diffuser_ itself is installed using the command in the root directory of the repository:
 ```
 $ pip install -e .
 ```
