@@ -38,17 +38,8 @@ In this toy example, we will generate diffuse scattering from a short MD traject
    ```
    Explore `vecs.ini` in more detail to understand what is being optimized.
 
-
-7. Generate the diffuse scattering from the optimized PC modes and calculate the cross-corelation (CC) with target diffuse scattering. Plot CC vs q.
+7. Use the `plot_cc_q.py` script to visualize the CC vs q plot for the best solution from the BGO output. 
    ```
-   $ diffuser.plot_CC_q.py vecs.ini -mc -i diff_intens.h5 -o out_fname.dat -c CC.dat 
+   $ python ../plotting/plot_cc_q.py vecs.ini -m -o lyso_vecs
    ``` 
-   Have a look at the `plot_CC_q.py` file to select options. More information can be obtained by running them with the `-h` flag.
-   with option (`-mc`) - calculate diffuse map (in .h5 format), then calculate CC with target map (in .dat format) and plot CC vs q.
-   with option (`-i`) path to the calculated diffuse map - calculate CC with target map and plot CC vs q.
-   With option (`-c`) path to the CC.dat - plot CC vs q.
-   
-8. Calculate cros-correlation between two different intensity distribution. CC vs radius/q calculator.
-   ```
-   $ diffuser.python calc_cc.py diff_intens1(target).h5 diff_intens2(calculated).h5 -r res_edge -b bin_size -o out_fname.dat
-   ```
+   You can also use it to plot the CC from a pre-calculated intensity file or even from a saved `...CC.dat` file.
