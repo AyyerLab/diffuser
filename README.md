@@ -1,6 +1,7 @@
 # _Diffuser_
 
-Discovering internal dynamics of proteins by fitting against their diffuse scattering intensities.
+Discovering internal dynamics of proteins by fitting against their diffuse scattering intensities. The package is used in the following preprint:
+> P Mazumder, K Ayyer, "Understanding conformational dynamics from macromolecular crystal diffuse scattering", [bioRxiv 2021.02.11.429988](https://doi.org/10.1101/2021.02.11.429988)
 
 ## Installation
 
