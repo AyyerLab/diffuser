@@ -59,14 +59,14 @@ class Liquidizer():
         shape = self.dgen.qrad.shape
         ncells = (shape[0]//self.abc[0], shape[1]//self.abc[1], shape[2]//self.abc[2])
 
+        n_max = 0
         if self.slimits.max() > 2 * np.pi * sigma_A / self.res_max:
             n_max = np.where(self.slimits > 2. * np.pi * sigma_A / self.res_max)[0][0] + 1
-        else:
-            bzone = cp.zeros(self.abc)
-            bzone[self.abc[0]//2, self.abc[1]//2, self.abc[2]//2] = 1
-            return cp.tile(bzone, ncells)
 
         if n_max == 0:
+            #bzone = cp.zeros(self.abc)
+            #bzone[self.abc[0]//2, self.abc[1]//2, self.abc[2]//2] = 1
+            #return cp.tile(bzone, ncells)
             return cp.ones_like(s_sq)
 
         liq = cp.zeros_like(s_sq)
