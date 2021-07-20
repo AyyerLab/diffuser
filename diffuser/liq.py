@@ -1,7 +1,6 @@
 import sys
 import numpy as np
 import cupy as cp
-import h5py
 from scipy import special
 
 class Liquidizer():
@@ -21,16 +20,7 @@ class Liquidizer():
         self.urad = cp.array(np.linalg.norm(np.dot(uvox, np.array([x, y, z]).reshape(3,-1)),
                                             axis=0).reshape(x.shape))
 
-        rlatt_fname = self.dgen.config.get_path('files', 'rlatt_fname', fallback=None)
-
-        # Get reciprocal lattice if defined
-        if rlatt_fname is None:
-            self.rlatt = None
-            self.lpatt = None
-        else:
-            with h5py.File(rlatt_fname, 'r') as fptr:
-                self.rlatt = cp.array(fptr['diff_intens'][:])
-            self.lpatt = cp.fft.fftshift(cp.fft.fftn(cp.fft.ifftshift(self.rlatt)))
+        self.abc = tuple([int(_) for _ in self.dgen.config.get('parameters', 'rlatt_vox', fallback='0 0 0').split()])
 
         self.slimits = [np.real(np.sqrt(special.lambertw(-(1.e-3 * special.factorial(n))**(1./n) / n,
                                                          k=0)) *
@@ -61,23 +51,34 @@ class Liquidizer():
 
     def liqlatt(self, sigma_A, gamma_A):
         '''Apply liquidization transform to reciprocal lattice'''
-        if self.rlatt is None:
-            raise AttributeError('Provide rlatt to apply liqlatt')
+        if self.abc[0] == 0:
+            msg = 'Provide rlatt_vox to apply liqlatt (recip. lattice voxel dimensions)'
+            raise AttributeError(msg)
+
         s_sq = (2 * cp.pi * sigma_A * self.dgen.qrad)**2
+        shape = self.dgen.qrad.shape
+        ncells = (shape[0]//self.abc[0], shape[1]//self.abc[1], shape[2]//self.abc[2])
 
         if self.slimits.max() > 2 * np.pi * sigma_A / self.res_max:
             n_max = np.where(self.slimits > 2. * np.pi * sigma_A / self.res_max)[0][0] + 1
         else:
-            return self.rlatt
+            bzone = cp.zeros(self.abc)
+            bzone[self.abc[0]//2, self.abc[1]//2, self.abc[2]//2] = 1
+            return cp.tile(bzone, ncells)
 
         if n_max == 0:
-            return cp.ones_like(self.rlatt)
+            return cp.ones_like(s_sq)
 
-        liq = cp.zeros_like(self.rlatt)
+        liq = cp.zeros_like(s_sq)
         for n in range(1, n_max):
             weight = cp.exp(-s_sq + n * cp.log(s_sq) - float(special.loggamma(n+1)))
-            kernel = cp.exp(-n * self.urad / gamma_A)
-            liq += weight * cp.abs(cp.fft.fftshift(cp.fft.ifftn(self.lpatt * kernel)))
+
+            curr_gamma = gamma_A / n
+            kernel = 8 * np.pi * curr_gamma**3 / (1 + (2 * np.pi * curr_gamma * self.dgen.qrad)**2)**2
+            bzone = kernel.reshape(ncells[0], self.abc[0], ncells[1], self.abc[1], ncells[2], self.abc[2])
+            bzone = bzone.sum((0, 2, 4))
+
+            liq += weight * cp.tile(bzone, ncells)
             sys.stderr.write('\rLiquidizing: %d/%d' % (n, n_max-1))
         sys.stderr.write('\n')
 
