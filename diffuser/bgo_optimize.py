@@ -179,7 +179,7 @@ class CovarianceOptimizer():
         # Apply LLM transforms
         if self.dims_code & 32 != 0:
             if self.lattice_llm:
-                i_calc = self.liq.liqlatt(svec[-2], svec[1]) * i_mc
+                i_calc = self.liq.liqlatt(svec[-2], svec[-1]) * i_mc
             else:
                 i_calc = self.liq.liquidize(i_mc, svec[-2], svec[-1])
         else:
