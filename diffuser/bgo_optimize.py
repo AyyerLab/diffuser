@@ -13,7 +13,8 @@ class CovarianceOptimizer():
     '''Class to run Bayesian optimization to get best covariance parameters
     matching the calculated and target diffuse scattering
     '''
-    def __init__(self, config_file):
+    def __init__(self, config_file, verbose=False):
+        self.verbose = verbose
         conf = DiffuserConfig(config_file)
         with h5py.File(conf.get_path('optimizer', 'itarget_fname'), 'r') as fptr:
             self.i_target = fptr['diff_intens'][:]
@@ -31,9 +32,10 @@ class CovarianceOptimizer():
         self.uncorr_bounds = conf.get_bounds('optimizer', 'uncorr_sigma_A_bounds')
         self.rbd_bounds = conf.get_bounds('optimizer', 'RBD_sigma_A_bounds')
         self.rbr_bounds = conf.get_bounds('optimizer', 'RBR_sigma_deg_bounds')
+        self.rbd_gamma_bounds = conf.get_bounds('optimizer', 'RBD_gamma_A_bounds')
+        self.halo_scale_bounds = conf.get_bounds('optimizer', 'halo_scale_bounds', fallback='0 1')
         self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
         self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
-        self.lattice_llm = conf.getboolean('optimizer', 'lattice_llm', fallback=False)
 
         qrange = conf.get_bounds('optimizer', 'q_range', '0.05 1.')
         self.point_group = conf.get('optimizer', 'point_group', fallback='1')
@@ -46,7 +48,7 @@ class CovarianceOptimizer():
         self.size = self.pcd.dgen.size
 
         if self.point_group not in ['1', '222']:
-            raise ValueError('%s point group not implemented' % self.point_group)
+            raise NotImplementedError('%s point group not implemented' % self.point_group)
         self.dims = []
         self._get_dims()
 
@@ -55,8 +57,10 @@ class CovarianceOptimizer():
                 self.i_intern = cp.array(fptr['diff_intens'][:])
         else:
             self.i_intern = None
+        if self.i_intern is None and (self.dims_code & 64 != 0 or self.dims_code & 31 == 0):
+            self.i_intern = self.pcd.dgen.get_intens()
 
-        if self.dims_code & 32 != 0:
+        if self.dims_code & (32+64) != 0:
             self.liq = Liquidizer(self.pcd.dgen)
 
         self.intrad, self.voxmask = self._get_qsel(*qrange)
@@ -72,6 +76,8 @@ class CovarianceOptimizer():
             cres = skopt.load(self.output_fname)
             x_init = cres.x_iters
             y_init = cres.func_vals
+            n_initial_points = 0
+            num_iter += len(cres.x_iters)
         else:
             x_init = None
             y_init = None
@@ -89,61 +95,62 @@ class CovarianceOptimizer():
             **kwargs
             )
 
-    def _get_dims(self):
-        # pylint: disable=too-many-branches
-        ddb = self.diag_bounds
-        odb = self.offdiag_bounds
-        llmsb = self.llm_sigma_bounds
-        llmgb = self.llm_gamma_bounds
-        ucb = self.uncorr_bounds
-        rbd = self.rbd_bounds
-        rbr = self.rbr_bounds
-
+    def _get_dims(self): # pylint: disable=too-many-branches
         self.dims_code = 0 # No optimization
-        if ddb[1] - ddb[0] != 0:
+        if np.diff(self.diag_bounds)[0] != 0:
             self.dims_code += 1
             print('Optimizing diagonal components')
-        if odb[1] - odb[0] != 0:
+        if np.diff(self.offdiag_bounds)[0] != 0:
             self.dims_code += 2
             print('Optimizing off-diagonal components')
-        if ucb[1] - ucb[0] != 0:
+        if np.diff(self.uncorr_bounds)[0] != 0:
             self.dims_code += 4
             print('Optimizing uncorrelated variance')
-        if rbd[1] - rbd[0] != 0:
+        if np.diff(self.rbd_bounds)[0] != 0:
             self.dims_code += 8
             print('Optimizing rigid body translations')
-        if rbr[1] - rbr[0] != 0:
+        if np.diff(self.rbr_bounds)[0] != 0:
             self.dims_code += 16
             print('Optimizing rigid body rotations')
-        if llmsb[1] - llmsb[0] != 0 and llmgb[1] - llmgb[0] !=0:
+        if np.diff(self.llm_sigma_bounds)[0] != 0 and np.diff(self.llm_gamma_bounds)[0] !=0:
             self.dims_code += 32
             print('Optimizing LLM parameters')
+        if np.diff(self.rbd_gamma_bounds)[0] != 0:
+            self.dims_code += 64
+            print('Optimizing inter-cell correlation length for RBD displacements')
 
         for i in range(self.num_vecs):
             for j in range(i+1):
                 if i == j and self.dims_code & 1 != 0:
-                    self.dims += [skopt.space.Real(*ddb, name='X_%d_%d'%(i,j))]
+                    self.dims += [skopt.space.Real(*self.diag_bounds, name='X_%d_%d'%(i,j))]
                 elif self.dims_code & 2 != 0:
-                    self.dims += [skopt.space.Real(*odb, name='X_%d_%d'%(i,j))]
+                    self.dims += [skopt.space.Real(*self.offdiag_bounds, name='X_%d_%d'%(i,j))]
 
         if self.dims_code & 4 != 0:
-            self.dims += [skopt.space.Real(*ucb, name='Uncorr_A')]
+            self.dims += [skopt.space.Real(*self.uncorr_bounds, name='Uncorr_A')]
 
         if self.dims_code & 8 != 0:
-            self.dims += [skopt.space.Real(*rbd, name='RBD_A')]
+            self.dims += [skopt.space.Real(*self.rbd_bounds, name='RBD_A')]
 
         if self.dims_code & 16 != 0:
-            self.dims += [skopt.space.Real(*rbr, name='RBR_deg')]
+            self.dims += [skopt.space.Real(*self.rbr_bounds, name='RBR_deg')]
 
         if self.dims_code & 32 != 0:
-            self.dims += [skopt.space.Real(*llmsb, name='LLM_sigma_A')]
-            self.dims += [skopt.space.Real(*llmgb, name='LLM_gamma_A')]
+            self.dims += [skopt.space.Real(*self.llm_sigma_bounds, name='LLM_sigma_A')]
+            self.dims += [skopt.space.Real(*self.llm_gamma_bounds, name='LLM_gamma_A')]
+
+        if self.dims_code & 64 != 0:
+            self.dims += [skopt.space.Real(*self.halo_scale_bounds, name='Halo scale')]
+            self.dims += [skopt.space.Real(*self.rbd_gamma_bounds, name='RBD_gamma_A')]
 
         print(len(self.dims), 'dimensional optimization')
 
-    def get_mc_intens(self, svec):
+    def get_mc_intens(self, svec): # pylint: disable=too-many-branches
         '''Get MC diffuse intensities for given s-vector'''
-        # pylint: disable=too-many-branches
+        if self.verbose:
+            print('Generating intensity for s =', svec)
+        rbd_sigma = self.pcd.dgen.cov_vox[0,0]**0.5
+
         # Set up MC parameters
         self.pcd.dgen.cov_weights[:] = 0.
         n = 0
@@ -161,29 +168,30 @@ class CovarianceOptimizer():
             self.pcd.dgen.sigma_uncorr = svec[n]
             n += 1
         if self.dims_code & 8 != 0:
-            self.pcd.dgen.cov_vox = svec[n]**2 * np.identity(3)
+            rbd_sigma = svec[n]**2
+            self.pcd.dgen.cov_vox = rbd_sigma**2 * np.identity(3)
             n += 1
         if self.dims_code & 16 != 0:
             self.pcd.dgen.sigma_deg = svec[n]
             n += 1
 
         # Calculate MC intensity if needed
-        if self.dims_code % 32 != 0:
+        if self.dims_code & 31 != 0:
             self.pcd.run_mc()
             i_mc = self.pcd.diff_intens
-        elif self.i_intern is not None:
+        else:
             i_mc = self.i_intern
-        else:
-            i_mc = self.pcd.dgen.get_intens()
 
-        # Apply LLM transforms
+        # Apply LLM/inter-cell transforms
         if self.dims_code & 32 != 0:
-            if self.lattice_llm:
-                i_calc = self.liq.liqlatt(svec[-2], svec[-1]) * i_mc
-            else:
-                i_calc = self.liq.liquidize(i_mc, svec[-2], svec[-1])
+            i_calc = self.liq.liquidize(i_mc, svec[n], svec[n+1])
+            n += 2
         else:
-            i_calc = i_mc
+            i_calc = i_mc.copy()
+
+        if self.dims_code & 64 != 0:
+            i_calc += svec[n] * self.liq.liqlatt(rbd_sigma, svec[n+1]) * self.i_intern
+            n += 2
 
         if self.point_group == '222':
             i_calc = 0.25 * (i_calc + i_calc[::-1] + i_calc[:,::-1] + i_calc[:,:,::-1])
@@ -230,11 +238,12 @@ def main():
     parser.add_argument('-d', '--device', help='GPU device number', type=int, default=0)
     parser.add_argument('-R', '--resume', help='Start from output file', action='store_true')
     parser.add_argument('-i', '--initial_points', help='Number of initial random points', type=int, default=10)
+    parser.add_argument('-v', '--verbose', help='Verbose output of s-vector for each iterations', action='store_true')
     args = parser.parse_args()
 
     cp.cuda.Device(args.device).use()
 
-    opt = CovarianceOptimizer(args.config_file)
+    opt = CovarianceOptimizer(args.config_file, verbose=args.verbose)
     opt.optimize(args.num_iter, resume=args.resume, n_initial_points=args.initial_points)
 
 if __name__ == '__main__':
