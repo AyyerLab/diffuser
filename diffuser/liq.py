@@ -16,7 +16,11 @@ class Liquidizer():
 
         # u-vectors for LLM
         uvox = np.linalg.inv(self.dgen.qvox.T) / self.dgen.size
-        x, y, z = self.dgen.x, self.dgen.y, self.dgen.z
+        #x, y, z = self.dgen.x, self.dgen.y, self.dgen.z
+        x, y, z = np.indices(self.dgen.qrad.shape)
+        x -= self.dgen.qrad.shape[0] // 2
+        y -= self.dgen.qrad.shape[1] // 2
+        z -= self.dgen.qrad.shape[2] // 2
         self.urad = cp.array(np.linalg.norm(np.dot(uvox, np.array([x, y, z]).reshape(3,-1)),
                                             axis=0).reshape(x.shape))
 
@@ -56,8 +60,6 @@ class Liquidizer():
             raise AttributeError(msg)
 
         s_sq = (2 * cp.pi * sigma_A * self.dgen.qrad)**2
-        shape = self.dgen.qrad.shape
-        ncells = (shape[0]//self.abc[0], shape[1]//self.abc[1], shape[2]//self.abc[2])
 
         n_max = 0
         if self.slimits.max() > 2 * np.pi * sigma_A / self.res_max:
@@ -67,19 +69,29 @@ class Liquidizer():
             #bzone = cp.zeros(self.abc)
             #bzone[self.abc[0]//2, self.abc[1]//2, self.abc[2]//2] = 1
             #return cp.tile(bzone, ncells)
+            print('Returning ones array')
             return cp.ones_like(s_sq)
 
         liq = cp.zeros_like(s_sq)
         for n in range(1, n_max):
             weight = cp.exp(-s_sq + n * cp.log(s_sq) - float(special.loggamma(n+1)))
-
-            curr_gamma = gamma_A / n
-            kernel = 8 * np.pi * curr_gamma**3 / (1 + (2 * np.pi * curr_gamma * self.dgen.qrad)**2)**2
-            bzone = kernel.reshape(ncells[0], self.abc[0], ncells[1], self.abc[1], ncells[2], self.abc[2])
-            bzone = bzone.sum((0, 2, 4))
-
-            liq += weight * cp.tile(bzone, ncells)
+            factor = self.corrdisp_factor(gamma_A / n)
+            liq += weight * factor
             sys.stderr.write('\rLiquidizing: %d/%d' % (n, n_max-1))
         sys.stderr.write('\n')
 
         return liq
+
+    def corrdisp_factor(self, gamma_A):
+        '''Generate factor for correlated displacements across unit cells'''
+        if self.abc[0] == 0:
+            msg = 'Provide rlatt_vox to generate corrdisp_factor'
+            raise AttributeError(msg)
+
+        shape = self.dgen.qrad.shape
+        ncells = (shape[0]//self.abc[0], shape[1]//self.abc[1], shape[2]//self.abc[2])
+
+        kernel = 8 * np.pi * gamma_A**3 / (1 + (2 * np.pi * gamma_A * self.dgen.qrad)**2)**2
+        bzone = kernel.reshape(ncells[0], self.abc[0], ncells[1], self.abc[1], ncells[2], self.abc[2])
+        bzone = bzone.sum((0, 2, 4))
+        return cp.tile(bzone, ncells)
