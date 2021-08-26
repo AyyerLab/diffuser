@@ -13,3 +13,5 @@ __pycache__/
 *.pdb
 *.h5
 *.npz
+*.dat
+*.pkl
