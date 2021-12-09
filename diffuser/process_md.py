@@ -22,7 +22,7 @@ class MDProcessor():
         if self.vecs_fname is None:
             self.vecs_fname = op.splitext(self.traj_fname)[0] + '_vecs.h5'
 
-        self.f_weighting = self.dgen.config.get_boolean('parameters', 'apply_f_weighting', fallback=True)
+        self.f_weighting = self.dgen.config.getboolean('parameters', 'apply_f_weighting', fallback=True)
         if not self.f_weighting:
             print('Not applying F-weighting to covariance matrix')
 
