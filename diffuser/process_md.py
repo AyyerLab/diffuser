@@ -22,6 +22,8 @@ class MDProcessor():
         if self.vecs_fname is None:
             self.vecs_fname = op.splitext(self.traj_fname)[0] + '_vecs.h5'
 
+        self.f_weighting = self.dgen.config.get_boolean('parameters', 'apply_f_weighting', fallback=True)
+
         self.cov = None
 
     def calc_cov(self, num_frames=-1, first_frame=0, frame_stride=1):
@@ -47,7 +49,8 @@ class MDProcessor():
         for i in range(first_frame, num_frames + first_frame, frame_stride):
             _ = self.dgen.univ.trajectory[i]
             pos = cp.array(self.dgen.atoms.positions) - mean_pos
-            pos = (pos.T * self.dgen.atom_f0).T # F-weighting the displacements
+            if self.f_weighting:
+                pos = (pos.T * self.dgen.atom_f0).T # F-weighting the displacements
             self.cov[0] += cp.outer(pos[:, 0], pos[:, 0])
             self.cov[1] += cp.outer(pos[:, 1], pos[:, 1])
             self.cov[2] += cp.outer(pos[:, 2], pos[:, 2])
@@ -93,8 +96,9 @@ class MDProcessor():
         # To get sorting acc. to absolute value with max first...
         sorter = cp.abs(vals).argsort()[::-1]
 
-        # We need to remove the scattering f-weighting from the eigenvectors
-        vecs = (vecs.T / cp.tile(self.dgen.atom_f0.get(), 3)).T
+        if self.f_weighting:
+            # We need to remove the scattering f-weighting from the eigenvectors
+            vecs = (vecs.T / cp.tile(self.dgen.atom_f0.get(), 3)).T
 
         # Select first N eigenvectors
         vals_n = vals[sorter[:num_vecs]].astype('f4')
