@@ -57,7 +57,7 @@ class CovarianceOptimizer():
                 self.i_intern = cp.array(fptr['diff_intens'][:])
         else:
             self.i_intern = None
-        if self.i_intern is None and (self.dims_code & 64 != 0 or self.dims_code & 31 == 0):
+        if self.i_intern is None and (self.dims_code & 96 != 0 or self.dims_code & 31 == 0):
             self.i_intern = self.pcd.dgen.get_intens()
 
         if self.dims_code & (32+64) != 0:
@@ -184,7 +184,9 @@ class CovarianceOptimizer():
 
         # Apply LLM/inter-cell transforms
         if self.dims_code & 32 != 0:
-            i_calc = self.liq.liquidize(i_mc, svec[n], svec[n+1])
+            #i_calc = self.liq.liquidize(i_mc, svec[n], svec[n+1])
+            i_calc = i_mc * np.exp(-4 * np.pi**2 * svec[n]**2 * self.pcd.dgen.qrad**2) + \
+                     self.liq.liquidize(self.i_intern, svec[n], svec[n+1])
             n += 2
         else:
             i_calc = i_mc.copy()
