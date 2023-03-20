@@ -77,11 +77,15 @@ class DiffuserConfig(configparser.ConfigParser):
         if traj_fname is not None:
             return [traj_fname]
         if traj_flist is not None:
-            with open(traj_flist, 'r') as fptr:
+            with open(traj_flist, 'r', encoding='utf-8') as fptr:
                 flist = [l.strip() for l in fptr.readlines()]
             return flist
         return None
 
     def get_bounds(self, section, key, fallback='0 0'):
         '''Get min/max bounds from two whitespace separated numbers'''
-        return tuple([float(s) for s in self.get(section, key, fallback=fallback).split()])
+        return tuple([float(s) for s in self.get(section, key, fallback=fallback).split()]) # pylint: disable=consider-using-generator
+
+    def get_farr(self, section, key, fallback=''):
+        '''Get array of floats from space-sparated numbers'''
+        return np.array([float(i) for i in self.get(section, key, fallback=fallback).split()])
