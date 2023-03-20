@@ -16,7 +16,7 @@ class DensityGenerator():
         else:
             self.config = DiffuserConfig(config_file)
 
-        with open(op.join(op.dirname(__file__), 'kernels.cu'), 'r') as fptr:
+        with open(op.join(op.dirname(__file__), 'kernels.cu'), 'r', encoding='ascii') as fptr:
             self.k_gen_dens = cp.RawModule(code=fptr.read()).get_function('gen_dens')
         self.cov_weights = cp.array([0.])
 
@@ -26,6 +26,7 @@ class DensityGenerator():
         self.a2vox = cp.array((self.qvox * self.size)).astype('f4')
 
         self._get_rbparams()
+        self._get_tlsparams()
         self._get_univ()
         if grid:
             self._gen_grid()
@@ -41,6 +42,15 @@ class DensityGenerator():
 
         rot_axis = self.config.getint('parameters', 'rot_axis', fallback=0)
         self.rot_plane = tuple(np.delete([0,1,2], rot_axis))
+
+    def _get_tlsparams(self):
+        self.tls_vib_std = cp.array(self.config.get_farr('parameters', 'tls_vib_std', fallback='0 0 0'))
+        self.tls_vib_rvec = cp.array(self.config.get_farr('parameters', 'tls_vib_rvec', fallback='0.01 0 0'))
+        self.tls_lib_std = cp.array(self.config.get_farr('parameters', 'tls_lib_std', fallback='0 0 0'))
+        self.tls_lib_rvec = cp.array(self.config.get_farr('parameters', 'tls_lib_rvec', fallback='0.01 0 0'))
+        self.tls_axis_positions = cp.array(self.config.get_farr('parameters', 'tls_axis_positions',
+                                                                fallback=' '.join(['0']*6)))
+        self.tls_screws = cp.array(self.config.get_farr('parameters', 'tls_screws', fallback='0 0 0'))
 
     def _gen_grid(self):
         '''Generate qrad array and solvent B-factor filter'''
@@ -66,7 +76,7 @@ class DensityGenerator():
 
         # Get PC vectors
         with h5py.File(vecs_fname, 'r') as fptr:
-            self.vecs = cp.array(fptr['vecs'][:].astype('f4'))
+            self.vecs = cp.array(fptr['vecs'][:].astype('f4')) # pylint: disable=no-member
             self.cov_weights = cp.array(fptr['cov_weights'][:])
 
         # Check number of components = 3N
@@ -142,6 +152,15 @@ class DensityGenerator():
 
         return cp.array(rotmatrix.astype('f4'))
 
+    @staticmethod
+    def _axang_to_rot(axis, angle):
+        '''Warning: axis assumed to be normalized'''
+        x, y, z = axis
+        c = cp.cos(angle) # pylint: disable=invalid-name
+        s = cp.sin(angle) # pylint: disable=invalid-name
+        zval = cp.array(0)
+        return c*cp.identity(3) + (1-c)*cp.outer(axis, axis) + s*cp.array([[zval,-z,y],[z,zval,-x],[-y,x,zval]])
+
     def gen_random_dens(self):
         '''Generate electron density by randomly distorting average molecule
 
@@ -163,6 +182,41 @@ class DensityGenerator():
         # Apply uncorrelated displacements
         if self.sigma_uncorr > 0.:
             curr_pos += cp.random.randn(*curr_pos.shape) * self.sigma_uncorr
+
+        return self.calc_dens_pos(curr_pos)
+
+    def gen_tls_dens(self):
+        '''Generate electron density by randomly moving molecule using TLS parameters
+
+        The following attributes are required:
+        tls_vib_std - 3 vibrational stds (in Angstroms)
+        tls_vib_rvec - 3-parameter rotation vector defining principal axes for vibrations
+        tls_lib_std - 3 angular rotation stds (in radians)
+        tls_lib_rvec - 3-parameter rotation vector defining libration axes
+        tls_axis_positions - 6-parameter list of axis intercepts (in Angstroms)
+        tls_screws - 3-parameter list of screw motions (in Angstroms/radian)
+        '''
+        vibs = cp.random.normal(0, self.tls_vib_std)
+        norm = cp.linalg.norm(self.tls_vib_rvec)
+        vib_vecs = self._axang_to_rot(self.tls_vib_rvec/norm, norm)
+
+        angs = cp.random.normal(0, self.tls_lib_std)
+        norm = cp.linalg.norm(self.tls_lib_rvec)
+        lib_vecs = self._axang_to_rot(self.tls_lib_rvec/norm, norm)
+
+        axpos = self.tls_axis_positions
+        w00 = 0.5 * (axpos[2] + axpos[4])
+        w11 = 0.5 * (axpos[0] + axpos[5])
+        w22 = 0.5 * (axpos[1] + axpos[3])
+        w_matrix = cp.array([[w00, axpos[0], axpos[1]], [axpos[2], w11, axpos[3]], [axpos[4], axpos[5], w22]])
+        w_vecs = cp.dot(lib_vecs, w_matrix.T)
+
+        curr_pos = cp.copy(self.avg_pos)
+        for i in range(3):
+            rotmat = self._axang_to_rot(lib_vecs[:,i], angs[i]) - cp.identity(3)
+            curr_pos += cp.dot(rotmat, (self.avg_pos - w_vecs[:,i]).T).T
+            curr_pos += lib_vecs[:,i] * self.tls_screws[i] * angs[i]
+        curr_pos += cp.dot(vib_vecs.T, vibs)
 
         return self.calc_dens_pos(curr_pos)
 
@@ -213,7 +267,11 @@ class DensityGenerator():
 
         # Solvent mask filtering
         mask = (dens<0.2).astype('f4')
-        mask = cp.real(cp.fft.ifftn(cp.fft.fftn(mask)*self.b_sol_filt)) - 1
+        mask = cp.fft.fftn(mask)
+        mask *= self.b_sol_filt
+        mask = cp.fft.ifftn(mask)
+        mask = cp.real(mask) - 1
+        #mask = cp.real(cp.fft.ifftn(cp.fft.fftn(mask)*self.b_sol_filt)) - 1
         dens += mask
 
         return dens
