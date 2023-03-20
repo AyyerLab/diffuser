@@ -47,7 +47,7 @@ class CovarianceOptimizer():
         self.pcd.dgen.vecs = self.pcd.dgen.vecs[:,:self.num_vecs]
         self.size = self.pcd.dgen.size
 
-        if self.point_group not in ['1', '222']:
+        if self.point_group not in ['1', '222', '4']:
             raise NotImplementedError('%s point group not implemented' % self.point_group)
         self.dims = []
         self._get_dims()
@@ -197,6 +197,11 @@ class CovarianceOptimizer():
 
         if self.point_group == '222':
             i_calc = 0.25 * (i_calc + i_calc[::-1] + i_calc[:,::-1] + i_calc[:,:,::-1])
+        elif self.point_group == '4': # Assuming 4-fold axis is Z (fastest changing)
+            i_calc = 0.25 * (i_calc +
+                             i_calc[::-1,::-1] +
+                             i_calc.transpose(1,0,2)[:,::-1] +
+                             i_calc.transpose(1,0,2)[::-1,:])
 
         return i_calc.get()
 
