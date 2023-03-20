@@ -6,4 +6,4 @@ from .pcdiff import PCDiffuse
 from .tlsdiff import TLSDiffuse
 from .traj_diff import TrajectoryDiffuse
 from .bgo_optimize import CovarianceOptimizer
-#from .bgo_tls import TLSOptimizer
+from .bgo_tls import TLSOptimizer
