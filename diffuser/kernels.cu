@@ -29,4 +29,21 @@ void gen_dens(const float *positions, const float *atom_f0, const long long num_
     atomicAdd(&dens[(ix+1)*size[1]*size[2] + (iy+1)*size[2]+ iz+1], val*fx*fy*fz) ;
 }
 
+__global__
+void get_qrad(const long long *sizes, const double *qvox, double *qrad) {
+	int x = blockIdx.x * blockDim.x + threadIdx.x ;
+	int y = blockIdx.y * blockDim.y + threadIdx.y ;
+	int z = blockIdx.z * blockDim.z + threadIdx.z ;
+
+	int tx = x - sizes[0] / 2 ;
+	int ty = y - sizes[1] / 2 ;
+	int tz = z - sizes[2] / 2 ;
+
+	double qx = tx * qvox[0] + ty * qvox[3] + tz * qvox[6] ;
+	double qy = tx * qvox[1] + ty * qvox[4] + tz * qvox[7] ;
+	double qz = tx * qvox[2] + ty * qvox[5] + tz * qvox[8] ;
+
+	qrad[x*sizes[1]*sizes[2] + y*sizes[2] + z] = sqrt(qx*qx + qy*qy + qz*qz) ;
+}
+
 } // extern C
