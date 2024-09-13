@@ -17,7 +17,9 @@ class DensityGenerator():
             self.config = DiffuserConfig(config_file)
 
         with open(op.join(op.dirname(__file__), 'kernels.cu'), 'r', encoding='ascii') as fptr:
-            self.k_gen_dens = cp.RawModule(code=fptr.read()).get_function('gen_dens')
+            kernels = cp.RawModule(code=fptr.read())
+            self.k_gen_dens = kernels.get_function('gen_dens')
+            self.k_get_qrad = kernels.get_function('get_qrad')
         self.cov_weights = cp.array([0.])
 
         self.size = self.config.get_size()
@@ -54,18 +56,9 @@ class DensityGenerator():
 
     def _gen_grid(self):
         '''Generate qrad array and solvent B-factor filter'''
-        cen = self.size // 2
-
-        # Grid
-        x, y, z = np.meshgrid(np.arange(self.size[0], dtype='f4') - cen[0],
-                              np.arange(self.size[1], dtype='f4') - cen[1],
-                              np.arange(self.size[2], dtype='f4') - cen[2],
-                              indexing='ij')
-        x, y, z = tuple(np.dot(self.qvox, np.array([x, y, z]).reshape(3,-1)).reshape((3,) + x.shape))
-        self.qrad = cp.array(np.linalg.norm(np.array([x, y, z]), axis=0))
-        self.x = x
-        self.y = y
-        self.z = z
+        self.qrad = cp.empty(self.size, dtype='f8')
+        self.k_get_qrad(tuple(self.size), (1,1,1),
+                        (cp.array(self.size), cp.array(self.qvox.ravel()).astype('f8'), self.qrad))
 
         # B_sol filter
         b_sol = self.config.getfloat('parameters', 'b_sol_A2', fallback=30.)
@@ -198,11 +191,17 @@ class DensityGenerator():
         '''
         vibs = cp.random.normal(0, self.tls_vib_std)
         norm = cp.linalg.norm(self.tls_vib_rvec)
-        vib_vecs = self._axang_to_rot(self.tls_vib_rvec/norm, norm)
+        if norm != 0.:
+            vib_vecs = self._axang_to_rot(self.tls_vib_rvec/norm, norm)
+        else:
+            vib_vecs = cp.identity(3)
 
         angs = cp.random.normal(0, self.tls_lib_std)
         norm = cp.linalg.norm(self.tls_lib_rvec)
-        lib_vecs = self._axang_to_rot(self.tls_lib_rvec/norm, norm)
+        if norm != 0:
+            lib_vecs = self._axang_to_rot(self.tls_lib_rvec/norm, norm)
+        else:
+            lib_vecs = cp.identity(3)
 
         axpos = self.tls_axis_positions
         w00 = 0.5 * (axpos[2] + axpos[4])
