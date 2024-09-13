@@ -38,18 +38,18 @@ parser.add_argument('--cmap', help='Matplotlib color map', default='coolwarm')
 args = parser.parse_args()
 
 vol = parse(args.fname, dset=args.dset)
-cen = vol.shape[0] // 2
+cen = np.array(vol.shape) // 2
 
 P.figure(figsize=(15,6))
 
 P.subplot(131)
-P.imshow(vol[cen], norm=colors.PowerNorm(gamma=args.gamma), cmap=args.cmap)
+P.imshow(vol[cen[0]], norm=colors.PowerNorm(gamma=args.gamma), cmap=args.cmap)
 P.title('XY plane')
 P.subplot(132)
-P.imshow(vol[:,cen], norm=colors.PowerNorm(gamma=args.gamma), cmap=args.cmap)
+P.imshow(vol[:,cen[1]], norm=colors.PowerNorm(gamma=args.gamma), cmap=args.cmap)
 P.title('YZ plane')
 P.subplot(133)
-P.imshow(vol[:,:,cen], norm=colors.PowerNorm(gamma=args.gamma), cmap=args.cmap)
+P.imshow(vol[:,:,cen[2]], norm=colors.PowerNorm(gamma=args.gamma), cmap=args.cmap)
 P.title('XZ plane')
 
 P.suptitle(op.basename(args.fname), fontsize=14)
