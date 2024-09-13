@@ -64,7 +64,7 @@ def main():
     cp.cuda.Device(args.device).use()
 
     cc_out_fname = args.out_prefix+'_CC.dat'
-    opt = diffuser.bgo_optimize.CovarianceOptimizer(args.config_file)
+    opt = diffuser.CovarianceOptimizer(args.config_file)
 
     if args.get_mc_intens: # Calculate Icalc from BGO s-vector
         i_calc = get_mc_icalc(opt, args.out_prefix)
