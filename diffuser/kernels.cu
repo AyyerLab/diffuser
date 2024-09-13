@@ -39,9 +39,9 @@ void get_qrad(const long long *sizes, const double *qvox, double *qrad) {
 	int ty = y - sizes[1] / 2 ;
 	int tz = z - sizes[2] / 2 ;
 
-	double qx = tx * qvox[0] + ty * qvox[3] + tz * qvox[6] ;
-	double qy = tx * qvox[1] + ty * qvox[4] + tz * qvox[7] ;
-	double qz = tx * qvox[2] + ty * qvox[5] + tz * qvox[8] ;
+	double qx = tx * qvox[0] + ty * qvox[1] + tz * qvox[2] ;
+	double qy = tx * qvox[3] + ty * qvox[4] + tz * qvox[5] ;
+	double qz = tx * qvox[6] + ty * qvox[7] + tz * qvox[8] ;
 
 	qrad[x*sizes[1]*sizes[2] + y*sizes[2] + z] = sqrt(qx*qx + qy*qy + qz*qz) ;
 }
