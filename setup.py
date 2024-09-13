@@ -13,6 +13,8 @@ setup(name = 'diffuser',
         'MDAnalysis',
         'matplotlib',
     ],
+    package_data = {'':['kernels.cu']
+    },
     entry_points = {'console_scripts': [
         'diffuser.bgo_optimize = diffuser.bgo_optimize:main',
         'diffuser.bgo_tls = diffuser.bgo_tls:main',
