@@ -23,10 +23,10 @@ class TLSOptimizer():
         self.num_steps = conf.getint('optimizer', 'num_steps')
         self.output_fname = conf.get_path('optimizer', 'output_fname')
 
-        self.vib_std_bounds = conf.get_bounds('optimizer', 'vib_std_bounds') # Angstrom
-        self.lib_std_bounds = conf.get_bounds('optimizer', 'lib_std_bounds') # Radians
-        self.lib_axis_pos_bounds = conf.get_bounds('optimizer', 'lib_axis_pos_bounds') # Angstroms
-        self.screw_bounds = conf.get_bounds('optimizer', 'screw_bounds') # Angstroms/radian
+        self.vib_std_bounds = conf.get_bounds('optimizer', 'vib_std_bounds', fallback='0 5') # Angstrom
+        self.lib_std_bounds = conf.get_bounds('optimizer', 'lib_std_bounds', fallback='0 3.14') # Radians
+        self.lib_axis_pos_bounds = conf.get_bounds('optimizer', 'lib_axis_pos_bounds', fallback='-10 10') # Angstroms
+        self.screw_bounds = conf.get_bounds('optimizer', 'screw_bounds', fallback='0 10') # Angstroms/radian
         self.do_aniso = conf.getboolean('optimizer', 'calc_anisotropic_cc', fallback=False)
         self.do_weighting = conf.getboolean('optimizer', 'apply_voxel_weighting', fallback=False)
 
@@ -40,7 +40,7 @@ class TLSOptimizer():
 
         if self.point_group not in ['1', '4', '222']:
             raise NotImplementedError('%s point group not implemented' % self.point_group)
-        self.dims = self._get_dims()
+        self.dims_code, self.dims = self._get_dims(config_file)
 
         self.intrad, self.voxmask = self._get_qsel(*qrange)
         self.voxmask &= ~np.isnan(self.i_target)
@@ -74,7 +74,7 @@ class TLSOptimizer():
             **kwargs
             )
 
-    def _get_dims(self): # pylint: disable=too-many-branches
+    def _get_dims(self, config_file): # pylint: disable=too-many-branches
         '''Get dimensions of TLS optimization
         21 dimensions in total:
             3 = vib_std
@@ -83,33 +83,69 @@ class TLSOptimizer():
             3 = lib_rvec
             6 = w_vecs
             3 = screw
+        Those values which are defined in [parameters] are "not" optimized
         '''
+        conf = DiffuserConfig(config_file)
+
         dims = []
-        for i in range(3):
-            dims += [skopt.space.Real(*self.vib_std_bounds, name='vib_std_%d'%(i+1))]
-        for i in range(3):
-            dims += [skopt.space.Real(-np.pi, np.pi, name='vib_rvec_%d'%(i+1))]
-        for i in range(3):
-            dims += [skopt.space.Real(*self.lib_std_bounds, name='lib_std_%d'%(i+1))]
-        for i in range(3):
-            dims += [skopt.space.Real(-np.pi, np.pi, name='lib_rvec_%d'%(i+1))]
-        for i in range(6):
-            dims += [skopt.space.Real(*self.lib_axis_pos_bounds, name='lib_axis_pos_%d'%(i+1))]
-        for i in range(3):
-            dims += [skopt.space.Real(*self.screw_bounds, name='lib_std_%d'%(i+1))]
-        return dims
+        dims_code = 0
+        if not conf.has_option('parameters', 'tls_vib_std'):
+            dims_code += 1
+            for i in range(3):
+                dims += [skopt.space.Real(*self.vib_std_bounds, name='vib_std_%d'%(i+1))]
+
+        if not conf.has_option('parameters', 'tls_vib_rvec'):
+            dims_code += 2
+            for i in range(3):
+                dims += [skopt.space.Real(-np.pi, np.pi, name='vib_rvec_%d'%(i+1))]
+
+        if not conf.has_option('parameters', 'tls_lib_std'):
+            dims_code += 4
+            for i in range(3):
+                dims += [skopt.space.Real(*self.lib_std_bounds, name='lib_std_%d'%(i+1))]
+
+        if not conf.has_option('parameters', 'tls_lib_rvec'):
+            dims_code += 8
+            for i in range(3):
+                dims += [skopt.space.Real(-np.pi, np.pi, name='lib_rvec_%d'%(i+1))]
+
+        if not conf.has_option('parameters', 'tls_axis_positions'):
+            dims_code += 16
+            for i in range(6):
+                dims += [skopt.space.Real(*self.lib_axis_pos_bounds, name='lib_axis_pos_%d'%(i+1))]
+
+        if not conf.has_option('parameters', 'tls_screws'):
+            dims_code += 32
+            for i in range(3):
+                dims += [skopt.space.Real(*self.screw_bounds, name='lib_std_%d'%(i+1))]
+
+        print(len(dims), 'dimensional optimization')
+        return dims_code, dims
 
     def get_mc_intens(self, svec): # pylint: disable=too-many-branches
         '''Get MC diffuse intensities for given s-vector'''
         if self.verbose:
             print('Generating intensity for s =', svec)
 
-        self.tlsd.dgen.tls_vib_std = cp.array(svec[0:3])
-        self.tlsd.dgen.tls_vib_rvec = cp.array(svec[3:6])
-        self.tlsd.dgen.tls_lib_std = cp.array(svec[6:9])
-        self.tlsd.dgen.tls_lib_rvec = cp.array(svec[9:12])
-        self.tlsd.dgen.tls_axis_positions = cp.array(svec[12:18])
-        self.tlsd.dgen.tls_screws = cp.array(svec[18:21])
+        n = 0
+        if self.dims_code & 1 != 0:
+            self.tlsd.dgen.tls_vib_std = cp.array(svec[n*3:n*3+3])
+            n += 1
+        if self.dims_code & 2 != 0:
+            self.tlsd.dgen.tls_vib_rvec = cp.array(svec[n*3:n*3+3])
+            n += 1
+        if self.dims_code & 4 != 0:
+            self.tlsd.dgen.tls_lib_std = cp.array(svec[n*3:n*3+3])
+            n += 1
+        if self.dims_code & 8 != 0:
+            self.tlsd.dgen.tls_lib_rvec = cp.array(svec[n*3:n*3+3])
+            n += 1
+        if self.dims_code & 16 != 0:
+            self.tlsd.dgen.tls_axis_positions = cp.array(svec[n*3:n*3+6])
+            n += 2
+        if self.dims_code & 32 != 0:
+            self.tlsd.dgen.tls_screws = cp.array(svec[n*3:n*3+3])
+            n += 1
 
         # Calculate MC intensity
         self.tlsd.run_mc()
